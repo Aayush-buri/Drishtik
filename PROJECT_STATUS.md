@@ -2,7 +2,7 @@
 
 ## Current Phase & Status
 - **Phase**: 1
-- **Status**: Repository Foundation
+- **Status**: Repository Foundation + Architecture Design
 
 ---
 
@@ -11,13 +11,17 @@
 - [x] initial documentation
 - [x] gitignore
 - [x] security principles
-- [x] development rules
+- [x] development rules (refined — 34 authoritative rules)
+- [x] system architecture (14-layer design)
+- [x] data flow architecture (17-stage evidence lifecycle)
+- [x] module architecture (responsibility boundaries)
+- [x] API architecture (16 endpoint groups)
+- [x] workspace agent rules
 
 ---
 
 ## Pending Milestones
-- [ ] system architecture
-- [ ] backend
+- [ ] backend implementation
 - [ ] authentication
 - [ ] frontend
 - [ ] evidence ingestion
