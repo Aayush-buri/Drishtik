@@ -1,34 +1,36 @@
 # Project Status
 
 ## Current Phase & Status
-- **Phase**: 1
-- **Status**: Repository Foundation + Architecture Design
+- **Phase**: 3
+- **Status**: Backend Foundation
 
 ---
 
 ## Completed Milestones
-- [x] repository structure
-- [x] initial documentation
-- [x] gitignore
-- [x] security principles
-- [x] development rules (refined — 34 authoritative rules)
-- [x] system architecture (14-layer design)
-- [x] data flow architecture (17-stage evidence lifecycle)
-- [x] module architecture (responsibility boundaries)
-- [x] API architecture (16 endpoint groups)
-- [x] workspace agent rules
+- [x] FastAPI foundation
+- [x] configuration
+- [x] SQLite/SQLAlchemy foundation
+- [x] Alembic foundation
+- [x] application logging
+- [x] health endpoint
+- [x] initial tests
+- [x] Python packaging configuration
 
 ---
 
 ## Pending Milestones
-- [ ] backend implementation
 - [ ] authentication
-- [ ] frontend
-- [ ] evidence ingestion
+- [ ] user management
+- [ ] case management
+- [ ] evidence management
+- [ ] device identification
+- [ ] acquisition
+- [ ] vendor parsers
 - [ ] video engine
-- [ ] vendor adapters
 - [ ] recovery
+- [ ] hashing
+- [ ] timeline
 - [ ] AI
 - [ ] blockchain
-- [ ] reporting
-- [ ] testing
+- [ ] chain of custody
+- [ ] reports
