@@ -1,0 +1,207 @@
+# ==============================================================================
+# Drishtik: Multi-Vendor DVR/NVR Forensic Analysis Platform - .gitignore
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Forensic Evidence & Proprietary CCTV Data (CRITICAL - NEVER COMMIT)
+# ------------------------------------------------------------------------------
+# Raw Disk & Forensic Images
+*.dd
+*.raw
+*.img
+*.E01
+*.e01
+*.aff
+*.aff4
+*.dmg
+*.iso
+*.vmdk
+*.vhd
+*.vhdx
+
+# Proprietary DVR/NVR Video & Stream Containers
+*.dav
+*.h264
+*.h265
+*.hevc
+*.264
+*.265
+*.svf
+*.idx
+*.dhv
+*.ps
+*.ts
+*.stream
+
+# Standard Video/Audio Evidence Files
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.wmv
+*.flv
+*.m4v
+*.3gp
+*.wav
+*.mp3
+*.aac
+
+# Forensic & Evidence Directories
+evidence/
+forensic_images/
+sample_data/*
+!sample_data/.gitkeep
+
+# ------------------------------------------------------------------------------
+# 2. Security, Credentials & Secrets (CRITICAL - NEVER COMMIT)
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*.cer
+*.p12
+*.pfx
+*.keystore
+secrets/
+credentials/
+*.secret
+
+# ------------------------------------------------------------------------------
+# 3. Python & Backend Environments
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+coverage.xml
+*.cover
+*.pyre/
+.mypy_cache/
+.ruff_cache/
+
+# ------------------------------------------------------------------------------
+# 4. Node.js, Frontend & Electron
+# ------------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Frontend Builds
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/out/
+out/
+dist/
+.tsbuildinfo
+.eslintcache
+.parcel-cache
+.stylelintcache
+
+# Electron Native Builds & Packaging
+release/
+dist-electron/
+app/dist/
+
+# ------------------------------------------------------------------------------
+# 5. Databases & Local Storage
+# ------------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ------------------------------------------------------------------------------
+# 6. Generated Reports & Export Outputs
+# ------------------------------------------------------------------------------
+reports/output/
+*.pdf
+*.docx
+*.xlsx
+*.csv
+*.html.report
+
+# ------------------------------------------------------------------------------
+# 7. Logs & Temporary Files
+# ------------------------------------------------------------------------------
+logs/
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+scratch/
+.system_generated/
+
+# ------------------------------------------------------------------------------
+# 8. Operating System & IDE Configurations
+# ------------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+
+# VS Code & JetBrains
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.sublime-project
+*.sublime-workspace
