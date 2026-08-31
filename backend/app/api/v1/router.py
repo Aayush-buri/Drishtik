@@ -1,23 +1,17 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
-from app.core.config import settings
+from app.api.v1.endpoints import auth, cases, members
 
 api_router = APIRouter()
 
-class HealthResponse(BaseModel):
-    status: str
-    service: str
-    version: str
-
-@api_router.get("/health", response_model=HealthResponse, tags=["health"])
+@api_router.get("/health", tags=["health"])
 def health_check():
-    """
-    Health check endpoint.
-    """
-    return HealthResponse(
-        status="ok",
-        service=settings.APP_NAME,
-        version=settings.APP_VERSION
-    )
+    from app.core.config import settings
+    return {
+        "service": settings.APP_NAME,
+        "status": "ok",
+        "version": settings.APP_VERSION
+    }
 
-# Note: Future modules (auth, cases, evidence, etc.) will be added here.
+api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+api_router.include_router(cases.router, prefix="/cases", tags=["Cases"])
+api_router.include_router(members.router, prefix="/cases", tags=["Collaborators"])
