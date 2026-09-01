@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { BrowserRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { CaseAuthScreen } from '../components/case/CaseAuthScreen';
 import { useAuth } from '../hooks/useAuth';
@@ -25,22 +25,24 @@ describe('CaseAuthScreen', () => {
 
   const renderComponent = () => {
     return render(
-      <BrowserRouter>
-        <CaseAuthScreen />
-      </BrowserRouter>
+      <MemoryRouter initialEntries={['/auth/CASE-123']}>
+        <Routes>
+          <Route path="/auth/:caseId" element={<CaseAuthScreen />} />
+        </Routes>
+      </MemoryRouter>
     );
   };
 
   it('renders correctly', () => {
     renderComponent();
-    expect(screen.getByLabelText(/Username/i)).toBeDefined();
-    expect(screen.getByLabelText(/Password/i)).toBeDefined();
+    expect(screen.getByLabelText('Username')).toBeDefined();
+    expect(screen.getByLabelText('Password')).toBeDefined();
     expect(screen.getByRole('button', { name: /Sign In/i })).toBeDefined();
   });
 
   it('shows error if username is empty', async () => {
     renderComponent();
-    fireEvent.click(screen.getByRole('button', { name: /Sign In/i }));
+    fireEvent.submit(screen.getByRole('button', { name: /Sign In/i }));
     
     await waitFor(() => {
       expect(screen.getByText('Username is required')).toBeDefined();
@@ -50,8 +52,8 @@ describe('CaseAuthScreen', () => {
 
   it('shows error if password is empty', async () => {
     renderComponent();
-    fireEvent.change(screen.getByLabelText(/Username/i), { target: { value: 'user1' } });
-    fireEvent.click(screen.getByRole('button', { name: /Sign In/i }));
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'user1' } });
+    fireEvent.submit(screen.getByRole('button', { name: /Sign In/i }));
     
     await waitFor(() => {
       expect(screen.getByText('Password is required')).toBeDefined();
@@ -61,9 +63,9 @@ describe('CaseAuthScreen', () => {
 
   it('calls login on valid submission', async () => {
     renderComponent();
-    fireEvent.change(screen.getByLabelText(/Username/i), { target: { value: 'user1' } });
-    fireEvent.change(screen.getByLabelText(/Password/i), { target: { value: 'pass123' } });
-    fireEvent.click(screen.getByRole('button', { name: /Sign In/i }));
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'user1' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pass123' } });
+    fireEvent.submit(screen.getByRole('button', { name: /Sign In/i }));
     
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalled();
