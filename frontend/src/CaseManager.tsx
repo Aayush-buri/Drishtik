@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Plus, AlertCircle, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { TopBar } from './components/layout/TopBar';
 import { CaseGrid } from './components/case/CaseGrid';
@@ -12,6 +13,7 @@ import { useCases } from './hooks/useCases';
 import type { CaseCreateInput } from './types/case';
 
 export function CaseManager() {
+  const navigate = useNavigate();
   const {
     cases,
     allCases,
@@ -28,16 +30,23 @@ export function CaseManager() {
   const [isNewCaseOpen, setIsNewCaseOpen] = useState(false);
 
   const handleOpenCase = useCallback((id: string) => {
-    // Future: navigate to case workspace with authentication
-    console.log(`Opening case ${id} — authentication screen pending`);
     setSelectedCaseId(id);
-  }, [setSelectedCaseId]);
+    navigate(`/auth/${id}`);
+  }, [setSelectedCaseId, navigate]);
 
   const handleCreateCase = useCallback(
     async (input: CaseCreateInput) => {
-      await createCase(input);
+      const newCase = await createCase(input);
+      // Backend automatically sets creator as admin, so we can route to auth immediately
+      // Actually wait, let the user manually open it after creation or open automatically
+      setIsNewCaseOpen(false);
+      // Select newly created case and navigate to auth
+      if (newCase && newCase.id) {
+        setSelectedCaseId(String(newCase.id));
+        navigate(`/auth/${newCase.id}`);
+      }
     },
-    [createCase]
+    [createCase, setSelectedCaseId, navigate]
   );
 
   return (

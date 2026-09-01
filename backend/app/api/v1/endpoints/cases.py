@@ -16,14 +16,12 @@ router = APIRouter()
 
 @router.post("", response_model=CaseResponse)
 def create_case(case_in: CaseCreate, db: Session = Depends(get_db)):
-    # Check if username exists
     existing_user = db.query(User).filter(User.username == case_in.username).first()
     if existing_user:
         raise HTTPException(status_code=409, detail="Username already exists")
 
     case_identifier = f"CASE-{uuid.uuid4().hex[:8].upper()}"
     
-    # Create User
     db_user = User(
         username=case_in.username,
         password_hash=get_password_hash(case_in.password),
@@ -32,9 +30,7 @@ def create_case(case_in: CaseCreate, db: Session = Depends(get_db)):
     db.add(db_user)
     
     try:
-        db.flush() # get user id
-        
-        # Create Case
+        db.flush()
         db_case = Case(
             case_identifier=case_identifier,
             name=case_in.name,
@@ -43,9 +39,8 @@ def create_case(case_in: CaseCreate, db: Session = Depends(get_db)):
             created_by=db_user.id
         )
         db.add(db_case)
-        db.flush() # get case id
+        db.flush()
         
-        # Create CaseMember
         db_member = CaseMember(
             case_id=db_case.id,
             user_id=db_user.id,
@@ -62,15 +57,9 @@ def create_case(case_in: CaseCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Database conflict")
 
 @router.get("", response_model=List[CaseResponse])
-def list_cases(current_user: User = Depends(require_authenticated_user), db: Session = Depends(get_db)):
-    memberships = db.query(CaseMember).filter(CaseMember.user_id == current_user.id, CaseMember.status == "ACTIVE").all()
-    
-    results = []
-    for m in memberships:
-        c = m.case
-        c.role = m.role
-        results.append(c)
-    return results
+def list_cases(db: Session = Depends(get_db)):
+    # Local desktop app: return all cases. Specific case access requires authentication.
+    return db.query(Case).all()
 
 @router.get("/{case_id}", response_model=CaseResponse)
 def get_case(case_id: int, current_user: User = Depends(require_authenticated_user), db: Session = Depends(get_db)):

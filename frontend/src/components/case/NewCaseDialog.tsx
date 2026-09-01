@@ -17,6 +17,7 @@ interface FormErrors {
   password?: string;
   confirm_password?: string;
   display_name?: string;
+  submit?: string;
 }
 
 export function NewCaseDialog({ open, onClose, onCreate }: NewCaseDialogProps) {
@@ -34,8 +35,8 @@ export function NewCaseDialog({ open, onClose, onCreate }: NewCaseDialogProps) {
 
   const update = (field: keyof CaseCreateInput, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
-    if (errors[field as keyof FormErrors]) {
-      setErrors((prev) => ({ ...prev, [field]: undefined }));
+    if (errors[field as keyof FormErrors] || errors.submit) {
+      setErrors((prev) => ({ ...prev, [field]: undefined, submit: undefined }));
     }
   };
 
@@ -61,8 +62,8 @@ export function NewCaseDialog({ open, onClose, onCreate }: NewCaseDialogProps) {
       setForm({ name: '', description: '', case_type: '', username: '', password: '', confirm_password: '', display_name: '' });
       setErrors({});
       onClose();
-    } catch {
-      // Error handled by parent
+    } catch (err: any) {
+      setErrors((prev) => ({ ...prev, submit: err.message || 'Failed to create case' }));
     } finally {
       setIsSubmitting(false);
     }
@@ -79,6 +80,13 @@ export function NewCaseDialog({ open, onClose, onCreate }: NewCaseDialogProps) {
   return (
     <Dialog open={open} onClose={handleClose} title="New Case" maxWidth="max-w-md">
       <form onSubmit={handleSubmit} className="space-y-5">
+        
+        {errors.submit && (
+          <div className="p-3 bg-red-50 text-red-600 text-sm rounded-md border border-red-100">
+            {errors.submit}
+          </div>
+        )}
+
         {/* Case Information */}
         <div className="space-y-3">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Case Information</p>

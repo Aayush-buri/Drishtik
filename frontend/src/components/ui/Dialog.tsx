@@ -42,20 +42,34 @@ export function Dialog({ open, onClose, title, children, maxWidth = 'max-w-lg' }
     [onClose]
   );
 
+  // Handle keyboard events (re-binds if onClose changes, but doesn't steal focus)
+  useEffect(() => {
+    if (open) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [open, handleKeyDown]);
+
+  // Handle focus management (runs ONLY when dialog open state changes)
   useEffect(() => {
     if (open) {
       previousFocus.current = document.activeElement as HTMLElement;
-      document.addEventListener('keydown', handleKeyDown);
       // Focus first input after animation
-      requestAnimationFrame(() => {
-        const firstInput = contentRef.current?.querySelector<HTMLElement>('input, button');
-        firstInput?.focus();
+      const raf = requestAnimationFrame(() => {
+        // Prefer focusing an input or textarea first, otherwise fallback to any focusable element
+        const firstInput = contentRef.current?.querySelector<HTMLElement>('input:not([type="hidden"]), textarea');
+        if (firstInput) {
+          firstInput.focus();
+        } else {
+          const firstFocusable = contentRef.current?.querySelector<HTMLElement>('button, [tabindex]:not([tabindex="-1"])');
+          firstFocusable?.focus();
+        }
       });
-      return () => document.removeEventListener('keydown', handleKeyDown);
+      return () => cancelAnimationFrame(raf);
     } else {
       previousFocus.current?.focus();
     }
-  }, [open, handleKeyDown]);
+  }, [open]);
 
   return (
     <AnimatePresence>

@@ -32,7 +32,6 @@ async def get_token(async_client, username, password="pass"):
 
 @pytest.mark.asyncio
 async def test_create_case(async_client):
-    # This endpoint creates the first admin user too!
     payload = {
         "name": "New Case",
         "description": "Desc",
@@ -48,26 +47,18 @@ async def test_create_case(async_client):
     assert data["role"] == "ADMIN"
     assert "case_identifier" in data
     
-    # Verify creator became admin
     token = await get_token(async_client, "new_creator", "new_password")
     res2 = await async_client.get(f"/api/v1/cases/{data['id']}", headers={"Authorization": f"Bearer {token}"})
     assert res2.status_code == 200
     assert res2.json()["role"] == "ADMIN"
 
 @pytest.mark.asyncio
-async def test_list_own_cases(async_client, test_users, test_case):
-    token = await get_token(async_client, "admin_user")
-    res = await async_client.get("/api/v1/cases", headers={"Authorization": f"Bearer {token}"})
+async def test_list_all_cases(async_client, test_users, test_case):
+    # No auth required to list cases in desktop app
+    res = await async_client.get("/api/v1/cases")
     assert res.status_code == 200
-    assert len(res.json()) == 1
+    assert len(res.json()) >= 1
     assert res.json()[0]["id"] == test_case.id
-
-@pytest.mark.asyncio
-async def test_cannot_list_another_users_case(async_client, test_users, test_case):
-    token = await get_token(async_client, "other_user")
-    res = await async_client.get("/api/v1/cases", headers={"Authorization": f"Bearer {token}"})
-    assert res.status_code == 200
-    assert len(res.json()) == 0
 
 @pytest.mark.asyncio
 async def test_view_authorized_case(async_client, test_users, test_case):
@@ -135,7 +126,6 @@ async def test_duplicate_username_rejected(async_client, test_users):
 @pytest.mark.asyncio
 async def test_duplicate_case_membership_rejected(async_client, test_users, test_case):
     token = await get_token(async_client, "admin_user")
-    # inv_user is already in case
     payload = {"username": "inv_user", "display_name": "Inv", "role": "VIEWER"}
     res = await async_client.post(f"/api/v1/cases/{test_case.id}/members", headers={"Authorization": f"Bearer {token}"}, json=payload)
     assert res.status_code == 409
