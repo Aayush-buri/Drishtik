@@ -48,9 +48,19 @@ export function CaseWorkspaceShell() {
 
   // Determine current module name from path
   const currentPath = location.pathname.split('/').pop();
-  const currentModule = navItems.find(item => 
+  let currentModule = navItems.find(item => 
     item.path === currentPath || (item.path === '' && location.pathname.endsWith(`/case/${activeCase.id}`))
-  )?.label || 'Settings';
+  )?.label;
+
+  if (!currentModule) {
+    if (location.pathname.includes('/evidence/')) {
+      currentModule = 'Evidence Inspection';
+    } else if (location.pathname.includes('/devices/')) {
+      currentModule = 'Device Details';
+    } else {
+      currentModule = 'Settings';
+    }
+  }
 
   return (
     <div className="flex h-screen w-full bg-gray-50 overflow-hidden font-sans">
@@ -78,7 +88,7 @@ export function CaseWorkspaceShell() {
                       : 'hover:bg-gray-800 hover:text-gray-100'
                   }`
                 }
-                title={item.label} // Tooltip for collapsed state
+                title={item.label}
               >
                 <item.icon size={18} className="shrink-0" />
                 <span className="text-sm hidden md:block">{item.label}</span>
@@ -149,7 +159,7 @@ export function CaseWorkspaceShell() {
         </header>
 
         {/* Content Area */}
-        <main className="flex-1 overflow-y-auto bg-gray-50 p-6">
+        <main className="flex-1 overflow-y-auto bg-gray-50">
           <Outlet />
         </main>
       </div>

@@ -62,11 +62,17 @@ def list_cases(db: Session = Depends(get_db)):
     return db.query(Case).all()
 
 @router.get("/{case_id}", response_model=CaseResponse)
-def get_case(case_id: int, current_user: User = Depends(require_authenticated_user), db: Session = Depends(get_db)):
-    member = db.query(CaseMember).filter(CaseMember.case_id == case_id, CaseMember.user_id == current_user.id, CaseMember.status == "ACTIVE").first()
+def get_case(case_id: str, current_user: User = Depends(require_authenticated_user), db: Session = Depends(get_db)):
+    if case_id.isdigit():
+        case = db.query(Case).filter(Case.id == int(case_id)).first()
+    else:
+        case = db.query(Case).filter(Case.case_identifier == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    member = db.query(CaseMember).filter(CaseMember.case_id == case.id, CaseMember.user_id == current_user.id, CaseMember.status == "ACTIVE").first()
     if not member:
         raise HTTPException(status_code=403, detail="Not authorized to access this case")
     
-    case = member.case
     case.role = member.role
     return case

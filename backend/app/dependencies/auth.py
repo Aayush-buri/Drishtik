@@ -35,20 +35,21 @@ def require_authenticated_user(current_user: User = Depends(get_current_user)) -
         raise HTTPException(status_code=401, detail="Inactive user")
     return current_user
 
-def require_case_member(case_id: int, current_user: User = Depends(require_authenticated_user), db: Session = Depends(get_db)) -> CaseMember:
-    case = db.query(Case).filter(Case.id == case_id).first()
+def require_case_member(case_identifier: str = None, case_id: int = None, current_user: User = Depends(require_authenticated_user), db: Session = Depends(get_db)) -> CaseMember:
+    if case_identifier:
+        case = db.query(Case).filter(Case.case_identifier == case_identifier).first()
+        if not case and case_identifier.isdigit():
+            case = db.query(Case).filter(Case.id == int(case_identifier)).first()
+    elif case_id:
+        case = db.query(Case).filter(Case.id == case_id).first()
+    else:
+        raise HTTPException(status_code=400, detail="Must provide case_id or case_identifier")
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
-        
-    member = db.query(CaseMember).filter(
-        CaseMember.case_id == case_id,
-        CaseMember.user_id == current_user.id,
-        CaseMember.status == "ACTIVE"
-    ).first()
-    
+    member = db.query(CaseMember).filter(CaseMember.case_id == case.id, CaseMember.user_id == current_user.id, CaseMember.status == "ACTIVE").first()
     if not member:
         raise HTTPException(status_code=403, detail="Not authorized to access this case")
-        
+    member.case = case
     return member
 
 def require_case_admin(member: CaseMember = Depends(require_case_member)) -> CaseMember:
@@ -60,3 +61,4 @@ def require_case_investigator_or_admin(member: CaseMember = Depends(require_case
     if member.role not in (RoleEnum.ADMIN, RoleEnum.INVESTIGATOR):
         raise HTTPException(status_code=403, detail="Investigator privileges required")
     return member
+

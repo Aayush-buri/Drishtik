@@ -47,7 +47,8 @@
 *.aac
 
 # Forensic & Evidence Directories
-evidence/
+/evidence/
+data/**/evidence/
 forensic_images/
 sample_data/*
 !sample_data/.gitkeep

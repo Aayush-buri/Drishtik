@@ -1,5 +1,11 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import secrets
+from pathlib import Path
 from typing import ClassVar
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+ENV_FILE = BASE_DIR / ".env"
 
 class Settings(BaseSettings):
     # Application Configuration
@@ -14,15 +20,16 @@ class Settings(BaseSettings):
     # Database Configuration
     DATABASE_URL: str = "sqlite:///./data/drishtik.db"
     
-    # Security
-    JWT_SECRET_KEY: str = "secret-key-for-development-only"
+    # Security: Loaded from .env or environment variable.
+    # If not provided in environment, generates a secure random key at runtime (never hard-coded).
+    JWT_SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(48))
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
     # Logging
     LOG_LEVEL: str = "INFO"
 
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
-        env_file=".env",
+        env_file=(str(ENV_FILE), ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore"
