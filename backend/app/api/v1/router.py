@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, cases, members, evidence, devices, acquisitions, video_analysis, recovery, ai_analysis, blockchain
+from app.api.v1.endpoints import auth, cases, members, evidence, devices, acquisitions, video_analysis, recovery, ai_analysis, blockchain, reports
 
 api_router = APIRouter()
 
@@ -22,5 +22,6 @@ api_router.include_router(video_analysis.router, prefix="/cases", tags=["Video A
 api_router.include_router(recovery.router, prefix="/cases", tags=["Forensic Recovery"])
 api_router.include_router(ai_analysis.router, prefix="/cases", tags=["AI Video Analysis"])
 api_router.include_router(blockchain.router, prefix="/cases", tags=["Blockchain & Chain of Custody"])
+api_router.include_router(reports.router, prefix="/cases", tags=["Forensic Reports"])
 
 

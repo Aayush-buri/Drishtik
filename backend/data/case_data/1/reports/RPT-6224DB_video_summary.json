@@ -1,0 +1,49 @@
+{
+  "report_data": {
+    "case_identifier": "CASE-RPT-74aafc",
+    "case_name": "Forensic Reporting Test Case",
+    "examiner_notes": "No examiner notes entered.",
+    "generated_at": "2026-09-05T07:44:01.286954+00:00",
+    "generated_by": "rpt_examiner_abdd8c",
+    "report_title": "Unified Video Representation Report \u2014 CASE-RPT-74aafc",
+    "report_type": "VIDEO_SUMMARY",
+    "total_video_streams": 1,
+    "video_streams": [
+      {
+        "audio_codec": "Unavailable / None",
+        "bitrate_kbps": "Unavailable",
+        "channel_index": 1,
+        "container_format": ".mp4",
+        "duration_seconds": 120.5,
+        "end_timestamp_osd": "Unavailable",
+        "evidence_identifier": "EVD-2a4af7",
+        "filename": "cctv_ch01.mp4",
+        "fps": "25.00",
+        "native_playback_support": "Yes",
+        "proprietary_format": "Standard Stream",
+        "proxy_availability": "Not Required / Original",
+        "resolution": "1920x1080",
+        "sha256": "ab40695aab1759827add545f9ea3f401d41af919d8411e284aa4a640dbe14794",
+        "start_timestamp_osd": "Unavailable",
+        "timeline_events_count": 1,
+        "timeline_highlights": [
+          {
+            "description": "White sedan entered facility gate.",
+            "event_type": "Motion",
+            "label": "Vehicle Entry Detected",
+            "timestamp": "2026-09-05T07:44:01.276173"
+          }
+        ],
+        "vendor": "Dahua",
+        "video_codec": "H.264"
+      }
+    ]
+  },
+  "report_metadata": {
+    "case_identifier": "CASE-RPT-74aafc",
+    "exported_at": "2026-09-05T07:44:01.287842+00:00",
+    "format": "JSON",
+    "report_identifier": "RPT-6224DB",
+    "standard": "DRISHTIK_FORENSIC_REPORT_V1"
+  }
+}

@@ -3,7 +3,7 @@ import {
   FileText, Shield, RefreshCw, Search, Film, Trash2, Plus, 
   CheckCircle, ArrowRight, User, Eye, Printer, Copy, Check, 
   X, Filter, HardDrive, Cpu, Layers, Clock, FileCheck,
-  Link2, AlertTriangle, Info
+  Link2, AlertTriangle, Info, Download, FilePlus
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { evidenceService } from '../../services/evidenceService';
@@ -15,16 +15,12 @@ import {
   type BlockchainVerificationResult, 
   type EvidenceBlockchainStatus 
 } from '../../services/blockchainService';
-
-interface ForensicReport {
-  id: string;
-  title: string;
-  reportType: 'Video Summary' | 'Evidence Report' | 'Recovery Report' | 'AI Analysis Report' | 'Chain of Custody Report';
-  createdBy: string;
-  generatedDate: string;
-  status: 'Draft' | 'Generated' | 'Final';
-  description: string;
-}
+import {
+  reportService,
+  type ReportSummary,
+  type ReportDetail,
+  type ReportVerificationResult
+} from '../../services/reportService';
 
 export function RecordsModule() {
   const { activeCase, user } = useAuth();
@@ -51,64 +47,25 @@ export function RecordsModule() {
   const [copiedPayload, setCopiedPayload] = useState(false);
   const [rawPayloadExpanded, setRawPayloadExpanded] = useState(false);
 
-  // Selected Report for view modal
-  const [selectedReport, setSelectedReport] = useState<ForensicReport | null>(null);
-  const [generatingReportId, setGeneratingReportId] = useState<string | null>(null);
+  // Real Forensic Reports state
+  const [reportsList, setReportsList] = useState<ReportSummary[]>([]);
+  const [isLoadingReportDetail, setIsLoadingReportDetail] = useState(false);
+  const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [selectedReportType, setSelectedReportType] = useState<string>('CASE_SUMMARY');
+  const [examinerNotesInput, setExaminerNotesInput] = useState<string>('');
+  const [exportFormatInput, setExportFormatInput] = useState<string>('PDF');
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
-  // Reports state
-  const [reports, setReports] = useState<ForensicReport[]>([
-    {
-      id: 'REP-001',
-      title: 'Forensic Video Summary',
-      reportType: 'Video Summary',
-      createdBy: 'Forensic Examiner',
-      generatedDate: new Date().toISOString().split('T')[0],
-      status: 'Generated',
-      description: 'Overview of imported video streams, technical parameters, codec profiles, and CCTV channels.'
-    },
-    {
-      id: 'REP-002',
-      title: 'Evidence Lineage & Integrity',
-      reportType: 'Evidence Report',
-      createdBy: 'Forensic Examiner',
-      generatedDate: new Date().toISOString().split('T')[0],
-      status: 'Generated',
-      description: 'Cryptographic SHA-256 / MD5 validation records, original-to-derived lineage, and chain of custody.'
-    },
-    {
-      id: 'REP-003',
-      title: 'Storage Carving & Recovery Audit',
-      reportType: 'Recovery Report',
-      createdBy: 'System / Recovery Engine',
-      generatedDate: new Date().toISOString().split('T')[0],
-      status: 'Draft',
-      description: 'Forensic carving results, discovered candidates, stream validations, and extracted evidence artifacts.'
-    },
-    {
-      id: 'REP-004',
-      title: 'AI Video Analysis Findings',
-      reportType: 'AI Analysis Report',
-      createdBy: 'Drishtik Vision Pipeline',
-      generatedDate: new Date().toISOString().split('T')[0],
-      status: 'Draft',
-      description: 'YOLO and OpenCV detection logs, person and vehicle classifications, motion contours, and timeline markers.'
-    },
-    {
-      id: 'REP-005',
-      title: 'Comprehensive Chain of Custody',
-      reportType: 'Chain of Custody Report',
-      createdBy: 'Audit Subsystem',
-      generatedDate: new Date().toISOString().split('T')[0],
-      status: 'Final',
-      description: 'Chronological tamper-evident journal of every procedural action taken on this case file.'
-    }
-  ]);
+  // Preview & Verification modal state
+  const [selectedReportDetail, setSelectedReportDetail] = useState<ReportDetail | null>(null);
+  const [reportVerificationResult, setReportVerificationResult] = useState<ReportVerificationResult | null>(null);
+  const [isVerifyingReport, setIsVerifyingReport] = useState(false);
 
   const loadData = async () => {
     if (!activeCase) return;
     setIsLoading(true);
     try {
-      const [logsData, evData, healthData, custodyData] = await Promise.all([
+      const [logsData, evData, healthData, custodyData, reportsData] = await Promise.all([
         evidenceService.listAuditLogs(activeCase.case_identifier),
         evidenceService.listEvidence(activeCase.case_identifier).catch(() => []),
         blockchainService.getHealth(activeCase.case_identifier).catch(() => ({
@@ -117,12 +74,14 @@ export function RecordsModule() {
           network: 'Hyperledger Fabric',
           message: 'Blockchain anchoring unavailable. Local SHA-256 integrity and audit logging remain active.'
         })),
-        blockchainService.getCustodyEvents(activeCase.case_identifier).catch(() => [])
+        blockchainService.getCustodyEvents(activeCase.case_identifier).catch(() => []),
+        reportService.listReports(activeCase.case_identifier).catch(() => [])
       ]);
       setLogs(logsData);
       setEvidenceList(evData);
       setBlockchainHealth(healthData);
       setCustodyEvents(custodyData);
+      setReportsList(reportsData);
     } catch (err) {
       console.error('Failed to load records data', err);
     } finally {
@@ -392,28 +351,64 @@ export function RecordsModule() {
     });
   }, [custodyEvents, search]);
 
-  const handleGenerateReport = (reportId: string) => {
-    setGeneratingReportId(reportId);
-    setTimeout(() => {
-      setReports(prev => prev.map(r => {
-        if (r.id === reportId) {
-          return {
-            ...r,
-            status: 'Generated',
-            generatedDate: new Date().toISOString().split('T')[0]
-          };
-        }
-        return r;
-      }));
-      setGeneratingReportId(null);
-    }, 600);
+  const handleOpenGenerateModal = () => {
+    setExaminerNotesInput('');
+    setSelectedReportType('CASE_SUMMARY');
+    setExportFormatInput('PDF');
+    setShowGenerateModal(true);
   };
 
-  const handleExportReport = (report: ForensicReport) => {
-    setSelectedReport(report);
-    setTimeout(() => {
-      window.print();
-    }, 200);
+  const handleGenerateReportSubmit = async () => {
+    if (!activeCase) return;
+    setIsGeneratingReport(true);
+    try {
+      const newReport = await reportService.generateReport(activeCase.case_identifier, {
+        report_type: selectedReportType,
+        examiner_notes: examinerNotesInput.trim() || undefined,
+        format: exportFormatInput
+      });
+      setShowGenerateModal(false);
+      setExaminerNotesInput('');
+      const updatedReports = await reportService.listReports(activeCase.case_identifier);
+      setReportsList(updatedReports);
+      setSelectedReportDetail(newReport);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to generate forensic report.');
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
+
+  const handlePreviewReport = async (reportIdentifier: string) => {
+    if (!activeCase) return;
+    setIsLoadingReportDetail(true);
+    try {
+      const detail = await reportService.getReport(activeCase.case_identifier, reportIdentifier);
+      setSelectedReportDetail(detail);
+    } catch (err: any) {
+      alert('Failed to load report detail: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsLoadingReportDetail(false);
+    }
+  };
+
+  const handleExportReportDirect = (reportIdentifier: string, format: string = 'PDF') => {
+    if (!activeCase) return;
+    const url = reportService.getExportUrl(activeCase.case_identifier, reportIdentifier, format);
+    window.open(url, '_blank');
+  };
+
+  const handleVerifyReport = async (reportIdentifier: string) => {
+    if (!activeCase) return;
+    setIsVerifyingReport(true);
+    try {
+      const res = await reportService.verifyReport(activeCase.case_identifier, reportIdentifier);
+      setReportVerificationResult(res);
+    } catch (err: any) {
+      alert('Report integrity check failed: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsVerifyingReport(false);
+    }
   };
 
   const copyPayloadToClipboard = (text: string) => {
@@ -803,91 +798,147 @@ export function RecordsModule() {
               <FileCheck size={16} className="text-indigo-600" />
               <h2 className="text-sm font-bold text-gray-900">Forensic Reports</h2>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                {reports.length} Available
+                {reportsList.length} Generated
               </span>
             </div>
+
+            <button
+              onClick={handleOpenGenerateModal}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-xs transition-colors"
+            >
+              <FilePlus size={14} />
+              Generate Report
+            </button>
           </div>
 
           {/* Reports List */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
-            {reports.map((report) => {
-              const isGenerating = generatingReportId === report.id;
-
-              return (
+            {reportsList.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center p-8 border-2 border-dashed border-gray-200 rounded-xl bg-white/50">
+                <div className="w-12 h-12 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 mb-3 shadow-xs">
+                  <FileText size={22} />
+                </div>
+                <h3 className="text-sm font-bold text-gray-900 mb-1">No forensic reports generated yet</h3>
+                <p className="text-xs text-gray-500 max-w-sm mb-4 leading-relaxed">
+                  Generate court-admissible forensic documentation for case <strong className="text-gray-700">{activeCase?.case_identifier}</strong>. All reports include full cryptographic SHA-256 digests and audit trail provenance.
+                </p>
+                <button
+                  onClick={handleOpenGenerateModal}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-xs transition-colors"
+                >
+                  <FilePlus size={14} />
+                  Generate First Report
+                </button>
+              </div>
+            ) : (
+              reportsList.map((report) => (
                 <div 
                   key={report.id}
                   className="p-4 rounded-lg border border-gray-200 bg-white hover:border-indigo-300 hover:shadow-xs transition-all flex flex-col gap-2.5"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
-                          {report.id}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                          {report.report_identifier}
                         </span>
-                        <h3 className="text-sm font-bold text-gray-900">{report.title}</h3>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 uppercase">
+                          {report.report_type.replace('_', ' ')}
+                        </span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                          {report.format}
+                        </span>
                       </div>
-                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
-                        {report.description}
-                      </p>
+                      <h3 className="text-sm font-bold text-gray-900 mt-1 truncate">{report.title}</h3>
                     </div>
 
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider shrink-0 ${
-                      report.status === 'Final' 
-                        ? 'bg-blue-50 text-blue-700 border border-blue-200' 
-                        : report.status === 'Generated'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : 'bg-gray-100 text-gray-600 border border-gray-200'
-                    }`}>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider shrink-0 bg-emerald-50 text-emerald-700 border border-emerald-200">
                       {report.status}
                     </span>
                   </div>
 
+                  {/* SHA-256 Hash Box */}
+                  <div className="bg-gray-50 p-2 rounded border border-gray-200 flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-mono text-gray-600 truncate flex-1">
+                      <span className="font-bold text-gray-400 mr-1">SHA-256:</span>
+                      {report.sha256}
+                    </div>
+                    <button
+                      onClick={() => copyPayloadToClipboard(report.sha256)}
+                      className="text-gray-400 hover:text-gray-600 shrink-0 p-0.5"
+                      title="Copy SHA-256 hash"
+                    >
+                      <Copy size={12} />
+                    </button>
+                  </div>
+
+                  {/* Metadata Row */}
                   <div className="flex items-center justify-between text-[11px] text-gray-400 border-t border-gray-100 pt-2 font-mono">
                     <span className="flex items-center gap-1">
-                      <Clock size={11} /> {report.generatedDate}
+                      <Clock size={11} /> {new Date(report.generated_at).toISOString().replace('T', ' ').substring(0, 16)}
                     </span>
-                    <span className="truncate max-w-[140px]">
-                      By: {report.createdBy}
+                    <span>
+                      {(report.file_size / 1024).toFixed(1)} KB
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Shield size={11} />
+                      {report.blockchain_status === 'ANCHORED' ? (
+                        <span className="text-emerald-600 font-semibold">ANCHORED</span>
+                      ) : (
+                        <span className="text-gray-500">Blockchain: UNAVAILABLE</span>
+                      )}
                     </span>
                   </div>
 
-                  {/* Actions: View / Generate / Export */}
-                  <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
+                  {/* Actions Bar */}
+                  <div className="flex items-center gap-1.5 pt-2 border-t border-gray-100 flex-wrap">
                     <button
-                      onClick={() => setSelectedReport(report)}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-md transition-colors"
+                      onClick={() => handlePreviewReport(report.report_identifier)}
+                      disabled={isLoadingReportDetail}
+                      className="flex-1 min-w-[70px] inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-md transition-colors disabled:opacity-50"
+                      title="Preview Report"
                     >
-                      <Eye size={13} className="text-gray-500" />
-                      View
+                      <Eye size={12} className="text-gray-500" />
+                      Preview
                     </button>
 
                     <button
-                      onClick={() => handleGenerateReport(report.id)}
-                      disabled={isGenerating}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors disabled:opacity-50"
+                      onClick={() => handleExportReportDirect(report.report_identifier, 'PDF')}
+                      className="flex-1 min-w-[80px] inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors"
+                      title="Download PDF"
                     >
-                      <RefreshCw size={13} className={isGenerating ? 'animate-spin' : ''} />
-                      {isGenerating ? 'Generating...' : 'Generate'}
+                      <Download size={12} />
+                      Export PDF
                     </button>
 
                     <button
-                      onClick={() => handleExportReport(report)}
-                      className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-md transition-colors"
-                      title="Export / Print Forensic Report"
+                      onClick={() => handleExportReportDirect(report.report_identifier, 'JSON')}
+                      className="flex-1 min-w-[80px] inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-md transition-colors"
+                      title="Download JSON"
                     >
-                      <Printer size={13} className="text-gray-600" />
-                      Export
+                      <Download size={12} className="text-gray-400" />
+                      JSON
+                    </button>
+
+                    <button
+                      onClick={() => handleVerifyReport(report.report_identifier)}
+                      disabled={isVerifyingReport}
+                      className="inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors"
+                      title="Verify SHA-256 Report Integrity"
+                    >
+                      <CheckCircle size={12} />
+                      Verify
                     </button>
                   </div>
                 </div>
-              );
-            })}
+              ))
+            )}
           </div>
 
           {/* Quick Summary Footer */}
           <div className="p-3.5 border-t border-gray-200 bg-gray-50/60 text-xs text-gray-500 flex items-center justify-between shrink-0">
+            <span>Generated Reports: <strong>{reportsList.length}</strong></span>
             <span>Case Evidence: <strong>{evidenceList.length}</strong> items</span>
-            <span>Audited Actions: <strong>{logs.length}</strong></span>
           </div>
         </div>
 
@@ -1107,31 +1158,51 @@ export function RecordsModule() {
         </div>
       )}
 
-      {/* MODAL: Formatted Forensic Case Report Modal (Printable) */}
-      {selectedReport && (
+      {/* MODAL: Real Formatted Forensic Case Report Preview Modal */}
+      {selectedReportDetail && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
             
             {/* Modal Actions Bar (Not Printed) */}
             <div className="px-6 py-3.5 border-b border-gray-200 bg-gray-50 flex items-center justify-between print:hidden">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <FileCheck size={18} className="text-indigo-600" />
-                <span className="text-sm font-bold text-gray-900">{selectedReport.title}</span>
+                <span className="text-sm font-bold text-gray-900">{selectedReportDetail.title}</span>
                 <span className="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
-                  {selectedReport.status}
+                  {selectedReportDetail.status}
+                </span>
+                <span className="text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-700 font-bold border border-purple-200">
+                  {selectedReportDetail.format}
                 </span>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => window.print()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-xs transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 rounded-md shadow-xs transition-colors"
+                  title="Print this document"
                 >
                   <Printer size={13} />
-                  Print / Save as PDF
+                  Print
                 </button>
                 <button
-                  onClick={() => setSelectedReport(null)}
+                  onClick={() => handleExportReportDirect(selectedReportDetail.report_identifier, 'PDF')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-xs transition-colors"
+                  title="Download court-admissible PDF"
+                >
+                  <Download size={13} />
+                  Export PDF
+                </button>
+                <button
+                  onClick={() => handleExportReportDirect(selectedReportDetail.report_identifier, 'JSON')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 rounded-md shadow-xs transition-colors"
+                  title="Download JSON data"
+                >
+                  <Download size={13} className="text-gray-400" />
+                  JSON
+                </button>
+                <button
+                  onClick={() => setSelectedReportDetail(null)}
                   aria-label="Close report view"
                   className="p-1.5 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-200 transition-colors"
                 >
@@ -1151,9 +1222,9 @@ export function RecordsModule() {
                     <p className="text-xs text-gray-600 font-sans mt-0.5">Digital Video & Storage Forensic Examination Laboratory</p>
                   </div>
                   <div className="text-right text-xs font-mono text-gray-700">
-                    <div>DOC REF: <strong>{selectedReport.id}</strong></div>
-                    <div>DATE: <strong>{new Date().toISOString().split('T')[0]}</strong></div>
-                    <div>PAGE: <strong>1 of 1</strong></div>
+                    <div>DOC REF: <strong>{selectedReportDetail.report_identifier}</strong></div>
+                    <div>DATE: <strong>{selectedReportDetail.generated_at.substring(0, 10)}</strong></div>
+                    <div>FORMAT: <strong>{selectedReportDetail.format}</strong></div>
                   </div>
                 </div>
               </div>
@@ -1167,33 +1238,41 @@ export function RecordsModule() {
                   </div>
                   <div>
                     <span className="text-gray-500 block font-bold">REPORT TYPE</span>
-                    <span className="text-gray-900 font-semibold">{selectedReport.reportType}</span>
+                    <span className="text-gray-900 font-semibold">{selectedReportDetail.report_type.replace('_', ' ')}</span>
                   </div>
                   <div>
                     <span className="text-gray-500 block font-bold">EXAMINER / OPERATOR</span>
                     <span className="text-gray-900 font-semibold">{user?.username || 'Forensic Examiner'}</span>
                   </div>
                   <div>
-                    <span className="text-gray-500 block font-bold">HASH STANDARD</span>
-                    <span className="text-gray-900 font-mono font-bold">SHA-256 + MD5</span>
+                    <span className="text-gray-500 block font-bold">BLOCKCHAIN ANCHOR</span>
+                    <span className="text-gray-900 font-semibold">
+                      {selectedReportDetail.blockchain_status === 'ANCHORED' ? (
+                        <span className="text-emerald-700 font-bold">ANCHORED</span>
+                      ) : (
+                        <span className="text-gray-600">UNAVAILABLE</span>
+                      )}
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {/* Executive Summary */}
-              <div className="mb-6 font-sans">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-gray-900 border-b border-gray-300 pb-1 mb-2">
-                  1. Executive Summary & Scope
-                </h3>
-                <p className="text-xs text-gray-700 leading-relaxed">
-                  This report documents the forensic evaluation, cryptographic integrity verification, and procedural handling of digital media artifacts associated with Case <strong>{activeCase?.case_identifier}</strong>. All processes adhere to digital forensic chain-of-custody standards. Original source materials remain strictly read-only; all investigative extractions and processing outputs are immutably derived and catalogued with unique cryptographic digests.
-                </p>
-              </div>
+              {/* Examiner Notes (If provided) */}
+              {selectedReportDetail.examiner_notes && (
+                <div className="mb-6 font-sans">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-900 border-b border-indigo-200 pb-1 mb-2">
+                    Investigator Examination Notes & Subjective Observations
+                  </h3>
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded text-xs text-indigo-950 italic whitespace-pre-wrap">
+                    {selectedReportDetail.examiner_notes}
+                  </div>
+                </div>
+              )}
 
-              {/* Evidence Inventory Table */}
+              {/* Evidence Table */}
               <div className="mb-6 font-sans">
                 <h3 className="text-sm font-bold uppercase tracking-wider text-gray-900 border-b border-gray-300 pb-1 mb-2">
-                  2. Evidence Inventory & Cryptographic Hashes
+                  Evidence Inventory & Cryptographic Hashes
                 </h3>
                 {evidenceList.length > 0 ? (
                   <table className="w-full text-left text-xs border border-gray-300 mt-2">
@@ -1217,7 +1296,7 @@ export function RecordsModule() {
                             </span>
                           </td>
                           <td className="p-2 border-r border-gray-200">{ev.size_bytes.toLocaleString()}</td>
-                          <td className="p-2 text-[10px] text-gray-600 break-all">{ev.sha256 || 'N/A'}</td>
+                          <td className="p-2 text-[10px] text-gray-600 break-all">{ev.sha256 || 'Unavailable'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1227,36 +1306,19 @@ export function RecordsModule() {
                 )}
               </div>
 
-              {/* Recent Chain of Custody Operations */}
-              <div className="mb-8 font-sans">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-gray-900 border-b border-gray-300 pb-1 mb-2">
-                  3. Audit Trail Excerpt (Chronological)
-                </h3>
-                <div className="border border-gray-300 rounded-sm overflow-hidden mt-2">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-gray-100 text-gray-700 font-bold border-b border-gray-300">
-                      <tr>
-                        <th className="p-2 border-r border-gray-300">Timestamp (UTC)</th>
-                        <th className="p-2 border-r border-gray-300">Action</th>
-                        <th className="p-2 border-r border-gray-300">Target</th>
-                        <th className="p-2 border-r border-gray-300">Operator</th>
-                        <th className="p-2">Result</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200 text-[11px]">
-                      {logs.slice(0, 8).map(log => (
-                        <tr key={log.id}>
-                          <td className="p-2 font-mono text-gray-600 border-r border-gray-200">
-                            {new Date(log.created_at).toISOString().replace('T', ' ').substring(0, 19)}
-                          </td>
-                          <td className="p-2 font-semibold border-r border-gray-200">{log.action}</td>
-                          <td className="p-2 font-mono border-r border-gray-200">{log.target_identifier || '—'}</td>
-                          <td className="p-2 border-r border-gray-200">{log.username || 'System'}</td>
-                          <td className="p-2 font-bold text-emerald-800">SUCCESS</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              {/* SHA-256 Report Integrity Digest */}
+              <div className="mb-6 font-sans bg-gray-50 p-3 rounded border border-gray-300">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-gray-700 uppercase">Document SHA-256 Digest:</span>
+                  <button
+                    onClick={() => copyPayloadToClipboard(selectedReportDetail.sha256)}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1 font-medium"
+                  >
+                    <Copy size={11} /> Copy Digest
+                  </button>
+                </div>
+                <div className="font-mono text-[11px] text-gray-800 break-all mt-1 bg-white p-2 rounded border border-gray-200">
+                  {selectedReportDetail.sha256}
                 </div>
               </div>
 
@@ -1280,6 +1342,175 @@ export function RecordsModule() {
 
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Generate Forensic Report Dialog */}
+      {showGenerateModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-lg flex flex-col overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+              <div className="flex items-center gap-2">
+                <FilePlus size={18} className="text-indigo-600" />
+                <h3 className="text-base font-bold text-gray-900">Generate Forensic Report</h3>
+              </div>
+              <button
+                onClick={() => setShowGenerateModal(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-200"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs">
+              {/* Report Type Selector */}
+              <div>
+                <label className="font-bold text-gray-700 block mb-1 uppercase tracking-wider text-[11px]">
+                  Select Report Type
+                </label>
+                <select
+                  value={selectedReportType}
+                  onChange={(e) => setSelectedReportType(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                >
+                  <option value="CASE_SUMMARY">Case Summary / Final Investigation Report (Sections A–M)</option>
+                  <option value="EVIDENCE_REPORT">Evidence Lineage & Integrity Inventory</option>
+                  <option value="VIDEO_SUMMARY">Unified Video Representation Report</option>
+                  <option value="RECOVERY_REPORT">Forensic Video Recovery & Stream Carving Report</option>
+                  <option value="AI_REPORT">AI Video Analytics & Object/Motion Findings</option>
+                  <option value="CHAIN_OF_CUSTODY">Comprehensive Chronological Chain of Custody</option>
+                </select>
+              </div>
+
+              {/* Format Selector */}
+              <div>
+                <label className="font-bold text-gray-700 block mb-1 uppercase tracking-wider text-[11px]">
+                  Output Format
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {['PDF', 'HTML', 'JSON'].map((fmt) => (
+                    <button
+                      key={fmt}
+                      type="button"
+                      onClick={() => setExportFormatInput(fmt)}
+                      className={`px-3 py-2 rounded-md font-semibold text-xs border transition-all ${
+                        exportFormatInput === fmt
+                          ? 'bg-indigo-50 border-indigo-500 text-indigo-700 ring-1 ring-indigo-500'
+                          : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      {fmt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Examiner Notes */}
+              <div>
+                <label className="font-bold text-gray-700 block mb-1 uppercase tracking-wider text-[11px]">
+                  Examiner Notes & Conclusions (Optional)
+                </label>
+                <textarea
+                  rows={4}
+                  value={examinerNotesInput}
+                  onChange={(e) => setExaminerNotesInput(e.target.value)}
+                  placeholder="Enter examiner notes, physical evidence observations, scope limitations, or case conclusions..."
+                  className="w-full p-2.5 text-xs bg-gray-50 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Forensic Rule: Investigative notes are preserved as authored. Automated AI findings remain strictly statistical and separate.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-6 py-3.5 border-t border-gray-200 bg-gray-50 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowGenerateModal(false)}
+                disabled={isGeneratingReport}
+                className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleGenerateReportSubmit}
+                disabled={isGeneratingReport}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-xs disabled:opacity-50"
+              >
+                {isGeneratingReport ? <RefreshCw size={13} className="animate-spin" /> : <FilePlus size={13} />}
+                {isGeneratingReport ? 'Compiling & Signing...' : 'Generate Forensic Report'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Report Integrity Verification Modal */}
+      {reportVerificationResult && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-lg overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+              <div className="flex items-center gap-2">
+                <CheckCircle size={18} className="text-indigo-600" />
+                <h3 className="text-sm font-bold text-gray-900">Report Cryptographic Integrity</h3>
+              </div>
+              <button
+                onClick={() => setReportVerificationResult(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3.5 text-xs">
+              <div className={`p-3.5 rounded-lg border flex items-center gap-3 ${
+                reportVerificationResult.overall_status === 'VERIFIED'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-rose-50 border-rose-200 text-rose-900'
+              }`}>
+                {reportVerificationResult.overall_status === 'VERIFIED' ? (
+                  <CheckCircle className="text-emerald-600 shrink-0" size={24} />
+                ) : (
+                  <AlertTriangle className="text-rose-600 shrink-0" size={24} />
+                )}
+                <div>
+                  <div className="font-bold text-sm">
+                    Status: {reportVerificationResult.overall_status}
+                  </div>
+                  <div className="text-[11px] mt-0.5">
+                    {reportVerificationResult.reason}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="p-2.5 bg-gray-50 rounded border border-gray-200">
+                  <span className="font-bold text-gray-500 block mb-0.5">REPORT IDENTIFIER</span>
+                  <span className="font-mono text-gray-900">{reportVerificationResult.report_identifier}</span>
+                </div>
+                <div className="p-2.5 bg-gray-50 rounded border border-gray-200">
+                  <span className="font-bold text-gray-500 block mb-0.5">CURRENT ARTIFACT SHA-256 (DISK)</span>
+                  <span className="font-mono text-gray-800 break-all">{reportVerificationResult.current_sha256}</span>
+                </div>
+                <div className="p-2.5 bg-gray-50 rounded border border-gray-200">
+                  <span className="font-bold text-gray-500 block mb-0.5">RECORDED FORENSIC SHA-256 (DATABASE)</span>
+                  <span className="font-mono text-gray-800 break-all">{reportVerificationResult.recorded_sha256}</span>
+                </div>
+                <div className="p-2.5 bg-gray-50 rounded border border-gray-200 flex justify-between items-center">
+                  <span className="font-bold text-gray-500">BLOCKCHAIN STATUS</span>
+                  <span className="font-semibold text-gray-700">{reportVerificationResult.blockchain_status}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setReportVerificationResult(null)}
+                className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-100"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

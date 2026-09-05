@@ -17,5 +17,8 @@ from app.models.ai_analysis import (
 from app.models.blockchain import (
     CustodyEvent, BlockchainAnchor, BlockchainAnchorStatus, CustodyVerificationStatus
 )
+from app.models.report import (
+    Report, ReportType, ReportStatus, ReportFormat
+)
 
 
