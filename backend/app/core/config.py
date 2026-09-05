@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     
     # Database Configuration
     DATABASE_URL: str = "sqlite:///./data/drishtik.db"
+    STORAGE_ROOT: str = "data"
     
     # Security: Loaded from .env or environment variable.
     # If not provided in environment, generates a secure random key at runtime (never hard-coded).

@@ -183,6 +183,16 @@ class RecoveryEngine:
             Mp4FtypCarvingStrategy(),
         ]
 
+    @property
+    def carving_strategies(self) -> List[CarvingStrategy]:
+        """Convenience property exposing registered carving strategies."""
+        return self.strategies
+
+    def is_supported_image(self, image_path: Path) -> bool:
+        """Returns True if the image is an identified/supported disk image."""
+        info = self.probe_image(Path(image_path))
+        return info.is_supported
+
     def probe_image(self, image_path: Path) -> DiskImageInfo:
         """Inspect and identify forensic disk image type."""
         if not image_path.is_file():
@@ -259,3 +269,137 @@ class RecoveryEngine:
                     break
 
         return candidates
+
+    def validate_candidate_stream(
+        self, image_path: Path, offset_bytes: int, length_bytes: int, detected_format: str
+    ) -> Dict[str, Any]:
+        """Validates stream structure at candidate offset and distinguishes VALID, PARTIAL, CORRUPTED."""
+        if not image_path.is_file():
+            return {"status": "UNKNOWN", "details": "Source image not found", "confidence": 0.0}
+
+        try:
+            with open(image_path, "rb") as f:
+                f.seek(offset_bytes)
+                sample = f.read(min(length_bytes, 64 * 1024))
+
+            if not sample:
+                return {"status": "CORRUPTED", "details": "Zero bytes read at offset", "confidence": 0.0}
+
+            # 1. Dahua DHAV Stream Validation
+            if "DHAV" in detected_format or sample.startswith(b"DHAV"):
+                if not sample.startswith(b"DHAV"):
+                    return {"status": "CORRUPTED", "details": "Missing DHAV magic bytes at offset", "confidence": 0.0}
+
+                # Check if sample contains Annex B NAL start codes or subsequent DHAV blocks
+                has_annex_b = b"\x00\x00\x00\x01" in sample or b"\x00\x00\x01" in sample
+                has_second_dhav = sample.find(b"DHAV", 4) != -1
+
+                if has_annex_b and has_second_dhav:
+                    return {
+                        "status": "VALID",
+                        "details": "Confirmed multi-frame Dahua DHAV stream with Annex B video payload",
+                        "confidence": 0.95,
+                    }
+                elif has_annex_b or has_second_dhav:
+                    return {
+                        "status": "PARTIAL",
+                        "details": "Isolated Dahua DHAV frame fragment detected",
+                        "confidence": 0.75,
+                    }
+                else:
+                    return {
+                        "status": "CORRUPTED",
+                        "details": "DHAV header present but payload data is truncated or corrupt",
+                        "confidence": 0.30,
+                    }
+
+            # 2. Hikvision HIKV / MPEG-PS Validation
+            if "Hikvision" in detected_format or sample.startswith(b"HIKV") or sample.startswith(b"\x00\x00\x01\xba"):
+                if sample.startswith(b"HIKV"):
+                    if len(sample) > 32 and (b"\x00\x00\x01" in sample or sample.find(b"HIKV", 4) != -1):
+                        return {
+                            "status": "VALID",
+                            "details": "Confirmed Hikvision HIKV stream container structure",
+                            "confidence": 0.92,
+                        }
+                    return {
+                        "status": "PARTIAL",
+                        "details": "Hikvision HIKV header fragment detected",
+                        "confidence": 0.70,
+                    }
+                elif sample.startswith(b"\x00\x00\x01\xba"):
+                    # MPEG-PS Pack Header check
+                    has_pes = b"\x00\x00\x01\xe0" in sample or b"\x00\x00\x01\xc0" in sample
+                    if has_pes:
+                        return {
+                            "status": "VALID",
+                            "details": "Confirmed MPEG-PS stream with video/audio PES packets",
+                            "confidence": 0.90,
+                        }
+                    return {
+                        "status": "PARTIAL",
+                        "details": "MPEG-PS Pack Header detected without complete PES payload",
+                        "confidence": 0.65,
+                    }
+
+            # 3. ISO MP4 Container Validation
+            if "MP4" in detected_format or b"ftyp" in sample[:16]:
+                ftyp_idx = sample.find(b"ftyp")
+                if ftyp_idx >= 4:
+                    box_len = int.from_bytes(sample[ftyp_idx - 4 : ftyp_idx], "big")
+                    has_moov = b"moov" in sample
+                    has_mdat = b"mdat" in sample
+
+                    if has_moov and has_mdat:
+                        return {
+                            "status": "VALID",
+                            "details": "Confirmed ISO MP4 container with ftyp, moov, and mdat boxes",
+                            "confidence": 0.98,
+                        }
+                    elif has_mdat or has_moov or box_len < len(sample):
+                        return {
+                            "status": "PARTIAL",
+                            "details": "ISO MP4 fragment detected (partial atom boxes)",
+                            "confidence": 0.80,
+                        }
+                    else:
+                        return {
+                            "status": "CORRUPTED",
+                            "details": "Malformed MP4 ftyp atom box",
+                            "confidence": 0.25,
+                        }
+
+            return {
+                "status": "UNKNOWN",
+                "details": "Unrecognized or unsupported stream format for deep validation",
+                "confidence": 0.50,
+            }
+
+        except Exception as e:
+            return {"status": "CORRUPTED", "details": f"Validation error: {str(e)}", "confidence": 0.0}
+
+    def extract_candidate_bytes(
+        self, image_path: Path, offset_bytes: int, length_bytes: int, output_path: Path
+    ) -> int:
+        """Safely carves bytes from source disk image to output path without modifying source."""
+        if not image_path.is_file():
+            raise FileNotFoundError(f"Source image not found: {image_path}")
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        chunk_size = 64 * 1024
+        written = 0
+
+        with open(image_path, "rb") as src, open(output_path, "wb") as dst:
+            src.seek(offset_bytes)
+            remaining = length_bytes
+            while remaining > 0:
+                to_read = min(chunk_size, remaining)
+                buf = src.read(to_read)
+                if not buf:
+                    break
+                dst.write(buf)
+                written += len(buf)
+                remaining -= len(buf)
+
+        return written
+

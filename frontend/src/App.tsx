@@ -4,7 +4,6 @@ import { CaseAuthScreen } from './components/case/CaseAuthScreen';
 import { CaseWorkspaceShell } from './components/case/CaseWorkspaceShell';
 import { Dashboard } from './components/case/Dashboard';
 import { SettingsPlaceholder } from './components/case/SettingsPlaceholder';
-import { ModulePlaceholder } from './components/case/ModulePlaceholder';
 import { EvidenceModule } from './components/case/evidence/EvidenceModule';
 import { EvidenceInspectionView } from './components/case/evidence/EvidenceInspectionView';
 import { DevicesModule } from './components/case/devices/DevicesModule';
@@ -12,6 +11,8 @@ import { DeviceDetailsView } from './components/case/devices/DeviceDetailsView';
 import { RecordsModule } from './components/case/RecordsModule';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { VideoAnalysisWorkspace } from './components/case/video/VideoAnalysisWorkspace';
+import { RecoveryModule } from './components/case/recovery/RecoveryModule';
+import { AIAnalysisModule } from './components/case/ai/AIAnalysisModule';
 
 function App() {
   return (
@@ -30,9 +31,8 @@ function App() {
             <Route path="devices" element={<DevicesModule />} />
             <Route path="devices/:deviceId" element={<DeviceDetailsView />} />
             <Route path="acquisition" element={<DevicesModule />} />
-            <Route path="recovery" element={<ModulePlaceholder />} />
-
-            <Route path="ai" element={<ModulePlaceholder />} />
+            <Route path="recovery" element={<RecoveryModule />} />
+            <Route path="ai" element={<AIAnalysisModule />} />
             <Route path="records" element={<RecordsModule />} />
             <Route path="settings" element={<SettingsPlaceholder />} />
           </Route>

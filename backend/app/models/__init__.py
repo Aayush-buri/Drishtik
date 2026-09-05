@@ -8,3 +8,10 @@ from app.models.acquisition import Acquisition, AcquisitionMethod, AcquisitionSt
 from app.models.video_analysis import (
     TimelineEvent, TimelineEventType, AnalysisNote, TimestampCalibration, VideoAnalysisSession
 )
+from app.models.recovery import (
+    RecoveryCandidate, RecoveryCandidateStatus, RecoveryScanJob, RecoveryScanStatus
+)
+from app.models.ai_analysis import (
+    AIAnalysisJob, AIJobStatus, AIFinding
+)
+
