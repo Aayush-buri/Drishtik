@@ -122,6 +122,11 @@ export function EvidenceCard({
               <ShieldAlert size={11} /> Mismatch
             </span>
           )}
+          {evidence.blockchain_status === 'ANCHORED' && (
+            <span className="inline-flex items-center text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded gap-1" title={evidence.blockchain_tx_id ? `Tx: ${evidence.blockchain_tx_id}` : 'Blockchain Anchored'}>
+              <ShieldCheck size={11} className="text-emerald-600" /> Anchored
+            </span>
+          )}
         </div>
       </div>
     </div>

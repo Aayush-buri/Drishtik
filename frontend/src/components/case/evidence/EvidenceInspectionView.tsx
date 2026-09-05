@@ -3,10 +3,11 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { 
   ArrowLeft, Shield, CheckCircle, AlertOctagon, 
   Copy, PlayCircle, Image as ImageIcon, MapPin, File as FileIcon,
-  Film, GitBranch, ArrowDown, ExternalLink, Info, Cpu
+  Film, GitBranch, ArrowDown, ExternalLink, Info, Cpu, Link2, X
 } from 'lucide-react';
 import { evidenceService } from '../../../services/evidenceService';
 import type { Evidence } from '../../../services/evidenceService';
+import { blockchainService, type BlockchainVerificationResult } from '../../../services/blockchainService';
 import { useAuth } from '../../../hooks/useAuth';
 import { Badge } from '../../ui/Badge';
 import { CreateDerivedClipModal } from './CreateDerivedClipModal';
@@ -22,7 +23,13 @@ export function EvidenceInspectionView() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [copiedHash, setCopiedHash] = useState<'sha256' | 'md5' | null>(null);
+  const [copiedHash, setCopiedHash] = useState<'sha256' | 'md5' | 'tx' | null>(null);
+
+  // Blockchain verification state
+  const [isVerifyingBlockchain, setIsVerifyingBlockchain] = useState(false);
+  const [blockchainModal, setBlockchainModal] = useState<BlockchainVerificationResult | null>(null);
+  const [isAnchoring, setIsAnchoring] = useState(false);
+  const [blockchainNotice, setBlockchainNotice] = useState<string | null>(null);
 
   // Derivation & Hex Preview modal states
   const [isDerivedModalOpen, setIsDerivedModalOpen] = useState(false);
@@ -76,7 +83,45 @@ export function EvidenceInspectionView() {
     }
   };
 
-  const copyToClipboard = (text: string, type: 'sha256' | 'md5') => {
+  const handleVerifyBlockchain = async () => {
+    if (!evidence || !caseId) return;
+    setIsVerifyingBlockchain(true);
+    setBlockchainNotice(null);
+    try {
+      const res = await blockchainService.verifyEvidence(activeCase?.case_identifier || caseId, evidence.id);
+      setBlockchainModal(res);
+      setEvidence(prev => prev ? {
+        ...prev,
+        blockchain_status: res.overall_status === 'VERIFIED' ? 'ANCHORED' : (res.overall_status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'FAILED'),
+        blockchain_tx_id: res.transaction_id || prev.blockchain_tx_id
+      } : null);
+    } catch (err: any) {
+      setBlockchainNotice(err.message || 'Blockchain verification request failed.');
+    } finally {
+      setIsVerifyingBlockchain(false);
+    }
+  };
+
+  const handleAnchorBlockchain = async () => {
+    if (!evidence || !caseId) return;
+    setIsAnchoring(true);
+    setBlockchainNotice(null);
+    try {
+      const res = await blockchainService.anchorEvidence(activeCase?.case_identifier || caseId, evidence.id);
+      setEvidence(prev => prev ? {
+        ...prev,
+        blockchain_status: res.status as any,
+        blockchain_tx_id: res.transaction_id || prev.blockchain_tx_id
+      } : null);
+      setBlockchainNotice(res.message || (res.status === 'ANCHORED' ? 'Evidence successfully anchored to Hyperledger Fabric.' : 'Blockchain service unavailable.'));
+    } catch (err: any) {
+      setBlockchainNotice(err.message || 'Anchoring failed.');
+    } finally {
+      setIsAnchoring(false);
+    }
+  };
+
+  const copyToClipboard = (text: string, type: 'sha256' | 'md5' | 'tx') => {
     navigator.clipboard.writeText(text);
     setCopiedHash(type);
     setTimeout(() => setCopiedHash(null), 2000);
@@ -658,6 +703,89 @@ export function EvidenceInspectionView() {
                     {evidence.md5_reference || <span className="text-gray-400 italic font-sans">Not available</span>}
                   </div>
                 </div>
+
+                {/* Hyperledger Fabric Blockchain Anchor Card */}
+                <div className="pt-4 border-t border-gray-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Link2 size={14} className="text-indigo-600" />
+                      <span className="text-xs font-bold text-gray-700 uppercase tracking-wider">Blockchain Anchor</span>
+                    </div>
+                    {canVerify && (
+                      <div className="flex items-center gap-1.5">
+                        {evidence.blockchain_status !== 'ANCHORED' && (
+                          <button
+                            onClick={handleAnchorBlockchain}
+                            disabled={isAnchoring}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition-colors disabled:opacity-50"
+                            title="Anchor evidence hash to Hyperledger Fabric"
+                          >
+                            <Link2 size={12} />
+                            {isAnchoring ? 'Anchoring...' : 'Anchor to Ledger'}
+                          </button>
+                        )}
+                        <button
+                          onClick={handleVerifyBlockchain}
+                          disabled={isVerifyingBlockchain}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded transition-colors disabled:opacity-50"
+                        >
+                          <Shield size={12} />
+                          {isVerifyingBlockchain ? 'Verifying...' : 'Verify Blockchain Integrity'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {blockchainNotice && (
+                    <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800 flex items-center justify-between">
+                      <span>{blockchainNotice}</span>
+                      <button onClick={() => setBlockchainNotice(null)} className="text-blue-500 hover:text-blue-700">
+                        <X size={13} />
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-500 font-medium">Blockchain Status:</span>
+                      <span className={`font-bold px-2 py-0.5 rounded text-[11px] ${
+                        evidence.blockchain_status === 'ANCHORED'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : evidence.blockchain_status === 'UNAVAILABLE'
+                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                            : evidence.blockchain_status === 'FAILED'
+                              ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                              : 'bg-gray-100 text-gray-700 border border-gray-200'
+                      }`}>
+                        {evidence.blockchain_status || 'NOT_ANCHORED'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between items-center mb-0.5">
+                        <span className="text-gray-500 font-medium">Transaction ID:</span>
+                        {evidence.blockchain_tx_id && (
+                          <button
+                            onClick={() => copyToClipboard(evidence.blockchain_tx_id!, 'tx')}
+                            className="text-indigo-600 hover:text-indigo-800 font-mono text-[11px] flex items-center gap-1"
+                          >
+                            {copiedHash === 'tx' ? <span className="text-emerald-600">Copied!</span> : <><Copy size={11} /> Copy</>}
+                          </button>
+                        )}
+                      </div>
+                      <div className="font-mono text-[11px] bg-white p-1.5 rounded border border-gray-200 text-gray-800 break-all">
+                        {evidence.blockchain_tx_id || <span className="text-gray-400 italic">None (Local SHA-256 only)</span>}
+                      </div>
+                    </div>
+
+                    {evidence.blockchain_anchored_at && (
+                      <div className="flex justify-between text-[11px] text-gray-500 pt-1 border-t border-gray-200/60">
+                        <span>Anchored Timestamp:</span>
+                        <span className="font-mono text-gray-700">{formatDate(evidence.blockchain_anchored_at)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </section>
 
@@ -727,6 +855,108 @@ export function EvidenceInspectionView() {
           evidenceIdentifier={evidence.evidence_identifier}
           filename={evidence.original_filename}
         />
+      )}
+
+      {/* 3-Point Blockchain Integrity Verification Modal */}
+      {blockchainModal && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between bg-gray-50/80">
+              <div className="flex items-center gap-2">
+                <Shield size={18} className="text-indigo-600" />
+                <h3 className="text-sm font-bold text-gray-900">Blockchain Integrity Verification</h3>
+              </div>
+              <button
+                onClick={() => setBlockchainModal(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 text-xs">
+              <div className={`p-3.5 rounded-lg border flex items-center gap-3 ${
+                blockchainModal.overall_status === 'VERIFIED'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : blockchainModal.overall_status === 'MISMATCH'
+                    ? 'bg-rose-50 border-rose-200 text-rose-900'
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+              }`}>
+                {blockchainModal.overall_status === 'VERIFIED' ? (
+                  <CheckCircle className="text-emerald-600 shrink-0" size={24} />
+                ) : blockchainModal.overall_status === 'MISMATCH' ? (
+                  <AlertOctagon className="text-rose-600 shrink-0" size={24} />
+                ) : (
+                  <Info className="text-amber-600 shrink-0" size={24} />
+                )}
+                <div>
+                  <div className="font-bold text-sm">
+                    Status: {blockchainModal.overall_status}
+                  </div>
+                  <div className="text-[11px] mt-0.5 leading-relaxed">
+                    {blockchainModal.reason}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-gray-700 uppercase tracking-wider mb-2 text-[11px]">
+                  3-Point Forensic Hash Audit
+                </h4>
+                <div className="border border-gray-200 rounded-lg overflow-hidden divide-y divide-gray-200">
+                  <div className="p-2.5 bg-gray-50 flex flex-col gap-1">
+                    <span className="font-semibold text-gray-700">1. Current Evidence SHA-256 (Disk Live)</span>
+                    <span className="font-mono text-[11px] text-gray-800 break-all bg-white p-1.5 rounded border border-gray-200">
+                      {blockchainModal.current_sha256}
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 bg-gray-50 flex flex-col gap-1">
+                    <span className="font-semibold text-gray-700">2. Recorded Evidence SHA-256 (Case DB)</span>
+                    <span className="font-mono text-[11px] text-gray-800 break-all bg-white p-1.5 rounded border border-gray-200">
+                      {blockchainModal.recorded_sha256}
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 bg-gray-50 flex flex-col gap-1">
+                    <span className="font-semibold text-gray-700">3. Blockchain Anchor SHA-256 (Hyperledger Fabric)</span>
+                    <span className="font-mono text-[11px] text-gray-800 break-all bg-white p-1.5 rounded border border-gray-200">
+                      {blockchainModal.anchored_sha256 || 'Not anchored / Unavailable'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 bg-gray-50 p-2.5 rounded-lg border border-gray-200 font-mono text-[11px]">
+                <div>
+                  <span className="text-gray-500 font-sans block text-[10px]">TRANSACTION ID</span>
+                  <span className="truncate block font-semibold text-gray-800" title={blockchainModal.transaction_id}>
+                    {blockchainModal.transaction_id || 'N/A'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500 font-sans block text-[10px]">BLOCK NUMBER</span>
+                  <span className="font-semibold text-gray-800">
+                    {blockchainModal.block_number !== undefined && blockchainModal.block_number !== null ? `#${blockchainModal.block_number}` : 'N/A'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 bg-slate-100 rounded-lg border border-slate-200 text-[11px] text-slate-700 leading-relaxed">
+                <strong>Forensic Scope Limitation:</strong> Blockchain verification proves data consistency and integrity of the recorded hash at timestamp. It does NOT prove the authenticity of the CCTV source recording or the truthfulness of the video content.
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setBlockchainModal(null)}
+                className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-md hover:bg-gray-100 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

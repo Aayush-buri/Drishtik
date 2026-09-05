@@ -43,6 +43,11 @@ class Evidence(Base):
     processing_status = Column(Enum(ProcessingStatus), default=ProcessingStatus.PENDING, nullable=False)
     evidence_status = Column(Enum(EvidenceStatus), default=EvidenceStatus.ORIGINAL, nullable=False)
     
+    # Blockchain Integrity Anchoring
+    blockchain_status = Column(String(32), default="NOT_ANCHORED", nullable=False)
+    blockchain_tx_id = Column(String(128), nullable=True, index=True)
+    blockchain_anchored_at = Column(DateTime(timezone=True), nullable=True)
+    
     # Lineage & Derivation
     parent_evidence_id = Column(Integer, ForeignKey("evidence.id"), nullable=True, index=True)
     derived_operation = Column(String, nullable=True)

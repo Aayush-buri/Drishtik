@@ -360,4 +360,25 @@ def create_evidence_from_acquisition(
     db.add(audit)
     db.commit()
 
+    try:
+        from app.services.blockchain_service import blockchain_service
+        from app.models.user import User
+        user_record = db.query(User).filter_by(id=user_id).first()
+        uname = user_record.username if user_record else "System"
+        blockchain_service.record_custody_and_anchor(
+            db=db,
+            case=case,
+            evidence=evidence,
+            action="EVIDENCE_ACQUIRED",
+            user_id=user_id,
+            username=uname,
+            audit_log_id=audit.id,
+            metadata={
+                "acquisition_identifier": acquisition.acquisition_identifier,
+                "original_filename": original_filename
+            }
+        )
+    except Exception as e:
+        logger.warning("Failed to anchor acquired evidence on blockchain: %s", e)
+
     return evidence

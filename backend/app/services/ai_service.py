@@ -482,6 +482,29 @@ def export_ai_frame(
     db.add(audit)
     db.commit()
 
+    try:
+        from app.services.blockchain_service import blockchain_service
+        from app.models.user import User
+        user_record = db.query(User).filter_by(id=user_id).first()
+        uname = user_record.username if user_record else "System"
+        blockchain_service.record_custody_and_anchor(
+            db=db,
+            case=case,
+            evidence=derived_ev,
+            action="AI_FRAME_EXPORTED",
+            user_id=user_id,
+            username=uname,
+            audit_log_id=audit.id,
+            metadata={
+                "parent_evidence": evidence.evidence_identifier,
+                "finding_identifier": finding.finding_identifier,
+                "object_class": finding.object_class,
+                "media_time": finding.media_time
+            }
+        )
+    except Exception as e:
+        logger.warning("Failed to anchor AI frame export on blockchain: %s", e)
+
     logger.info("AI_FRAME_EXPORTED: Frame %s exported from finding %s", frame_ident, finding.finding_identifier)
     return finding, derived_ev
 

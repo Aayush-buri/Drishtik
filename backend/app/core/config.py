@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
 
+    # Hyperledger Fabric Blockchain Configuration
+    FABRIC_ENABLED: bool = False
+    FABRIC_PEER_ENDPOINT: str = "localhost:7051"
+    FABRIC_CHANNEL_NAME: str = "cctvchannel"
+    FABRIC_CHAINCODE_NAME: str = "evidence_anchor"
+    FABRIC_MSP_ID: str = "Org1MSP"
+    FABRIC_CRYPTO_PATH: str = "blockchain/crypto"
+    FABRIC_TLS_CERT_PATH: str = ""
+    FABRIC_CLIENT_CERT_PATH: str = ""
+    FABRIC_CLIENT_KEY_PATH: str = ""
+    FABRIC_GATEWAY_TIMEOUT_SECONDS: int = 5
+
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_file=(str(ENV_FILE), ".env"),
         env_file_encoding="utf-8",

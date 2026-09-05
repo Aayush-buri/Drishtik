@@ -179,6 +179,23 @@ async def import_evidence(db: Session, case: Case, file: UploadFile, user_id: in
     )
     db.add(audit)
     db.commit()
+
+    try:
+        from app.services.blockchain_service import blockchain_service
+        user_record = db.query(User).filter_by(id=user_id).first()
+        uname = user_record.username if user_record else "System"
+        blockchain_service.record_custody_and_anchor(
+            db=db,
+            case=case,
+            evidence=db_evidence,
+            action="EVIDENCE_IMPORTED",
+            user_id=user_id,
+            username=uname,
+            audit_log_id=audit.id,
+            metadata={"filename": original_filename, "size_bytes": size_bytes}
+        )
+    except Exception as e:
+        logger.warning("Failed to anchor imported evidence on blockchain: %s", e)
     
     return db_evidence
 
@@ -387,6 +404,23 @@ def derive_evidence(
     )
     db.add(audit)
     db.commit()
+
+    try:
+        from app.services.blockchain_service import blockchain_service
+        user_record = db.query(User).filter_by(id=user_id).first()
+        uname = user_record.username if user_record else "System"
+        blockchain_service.record_custody_and_anchor(
+            db=db,
+            case=case,
+            evidence=db_derived,
+            action="EVIDENCE_DERIVED",
+            user_id=user_id,
+            username=uname,
+            audit_log_id=audit.id,
+            metadata={"parent_id": parent_evidence.evidence_identifier, "operation": operation}
+        )
+    except Exception as e:
+        logger.warning("Failed to anchor derived evidence on blockchain: %s", e)
 
     return db_derived
 

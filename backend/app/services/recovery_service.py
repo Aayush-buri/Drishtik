@@ -319,6 +319,28 @@ def recover_candidate(
     db.add(audit)
     db.commit()
 
+    try:
+        from app.services.blockchain_service import blockchain_service
+        from app.models.user import User
+        user_record = db.query(User).filter_by(id=user_id).first()
+        uname = user_record.username if user_record else "System"
+        blockchain_service.record_custody_and_anchor(
+            db=db,
+            case=case,
+            evidence=recovered_ev,
+            action="RECOVERED_EVIDENCE_CREATED",
+            user_id=user_id,
+            username=uname,
+            audit_log_id=audit.id,
+            metadata={
+                "candidate_identifier": cand.candidate_identifier,
+                "source_evidence": source_ev.evidence_identifier,
+                "source_offset": cand.source_offset
+            }
+        )
+    except Exception as e:
+        logger.warning("Failed to anchor recovered evidence on blockchain: %s", e)
+
     logger.info("RECOVERED_EVIDENCE_CREATED: %s carved from %s at offset %d", ev_ident, source_ev.evidence_identifier, cand.source_offset)
 
     return cand, recovered_ev

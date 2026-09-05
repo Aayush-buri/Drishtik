@@ -14,4 +14,8 @@ from app.models.recovery import (
 from app.models.ai_analysis import (
     AIAnalysisJob, AIJobStatus, AIFinding
 )
+from app.models.blockchain import (
+    CustodyEvent, BlockchainAnchor, BlockchainAnchorStatus, CustodyVerificationStatus
+)
+
 

@@ -2,11 +2,19 @@ import { useState, useEffect, useMemo } from 'react';
 import { 
   FileText, Shield, RefreshCw, Search, Film, Trash2, Plus, 
   CheckCircle, ArrowRight, User, Eye, Printer, Copy, Check, 
-  X, Filter, HardDrive, Cpu, Layers, Clock, FileCheck
+  X, Filter, HardDrive, Cpu, Layers, Clock, FileCheck,
+  Link2, AlertTriangle, Info
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { evidenceService } from '../../services/evidenceService';
 import type { AuditLogEntry, Evidence } from '../../services/evidenceService';
+import { 
+  blockchainService, 
+  type BlockchainHealth, 
+  type CustodyEvent, 
+  type BlockchainVerificationResult, 
+  type EvidenceBlockchainStatus 
+} from '../../services/blockchainService';
 
 interface ForensicReport {
   id: string;
@@ -26,8 +34,20 @@ export function RecordsModule() {
   const [search, setSearch] = useState('');
   const [moduleFilter, setModuleFilter] = useState<string>('ALL');
 
+  // Left panel view mode: Audit Trail vs Chain of Custody & Blockchain
+  const [recordViewMode, setRecordViewMode] = useState<'audit' | 'custody'>('audit');
+  const [custodyEvents, setCustodyEvents] = useState<CustodyEvent[]>([]);
+  const [blockchainHealth, setBlockchainHealth] = useState<BlockchainHealth | null>(null);
+
+  // Blockchain verification modal state
+  const [verificationResult, setVerificationResult] = useState<BlockchainVerificationResult | null>(null);
+  const [isVerifyingBlockchain, setIsVerifyingBlockchain] = useState(false);
+  const [copiedHashString, setCopiedHashString] = useState<string | null>(null);
+
   // Selected Log for detail modal
   const [selectedLog, setSelectedLog] = useState<AuditLogEntry | null>(null);
+  const [selectedLogBlockchain, setSelectedLogBlockchain] = useState<EvidenceBlockchainStatus | null>(null);
+  const [isLoadingLogBlockchain, setIsLoadingLogBlockchain] = useState(false);
   const [copiedPayload, setCopiedPayload] = useState(false);
   const [rawPayloadExpanded, setRawPayloadExpanded] = useState(false);
 
@@ -88,12 +108,21 @@ export function RecordsModule() {
     if (!activeCase) return;
     setIsLoading(true);
     try {
-      const [logsData, evData] = await Promise.all([
+      const [logsData, evData, healthData, custodyData] = await Promise.all([
         evidenceService.listAuditLogs(activeCase.case_identifier),
-        evidenceService.listEvidence(activeCase.case_identifier).catch(() => [])
+        evidenceService.listEvidence(activeCase.case_identifier).catch(() => []),
+        blockchainService.getHealth(activeCase.case_identifier).catch(() => ({
+          available: false,
+          status: 'UNAVAILABLE',
+          network: 'Hyperledger Fabric',
+          message: 'Blockchain anchoring unavailable. Local SHA-256 integrity and audit logging remain active.'
+        })),
+        blockchainService.getCustodyEvents(activeCase.case_identifier).catch(() => [])
       ]);
       setLogs(logsData);
       setEvidenceList(evData);
+      setBlockchainHealth(healthData);
+      setCustodyEvents(custodyData);
     } catch (err) {
       console.error('Failed to load records data', err);
     } finally {
@@ -105,8 +134,55 @@ export function RecordsModule() {
     loadData();
   }, [activeCase]);
 
+  // Query blockchain status for target evidence in selectedLog
+  useEffect(() => {
+    if (!selectedLog || !activeCase) {
+      setSelectedLogBlockchain(null);
+      return;
+    }
+    const ev = evidenceList.find(e => e.evidence_identifier === selectedLog.target_identifier);
+    if (ev) {
+      setIsLoadingLogBlockchain(true);
+      blockchainService.getEvidenceStatus(activeCase.case_identifier, ev.id)
+        .then(data => setSelectedLogBlockchain(data))
+        .catch(() => setSelectedLogBlockchain(null))
+        .finally(() => setIsLoadingLogBlockchain(false));
+    } else {
+      setSelectedLogBlockchain(null);
+    }
+  }, [selectedLog, activeCase, evidenceList]);
+
+  const handleVerifyBlockchain = async (evidenceId: number, identifier: string) => {
+    if (!activeCase) return;
+    setIsVerifyingBlockchain(true);
+    try {
+      const res = await blockchainService.verifyEvidence(activeCase.case_identifier, evidenceId);
+      setVerificationResult(res);
+      loadData();
+    } catch (err: any) {
+      setVerificationResult({
+        evidence_identifier: identifier,
+        overall_status: 'UNAVAILABLE',
+        current_sha256: 'Unknown',
+        recorded_sha256: 'Unknown',
+        reason: err?.message || 'Verification request could not be processed.',
+        verified_at: new Date().toISOString(),
+        blockchain_status: 'UNAVAILABLE'
+      });
+    } finally {
+      setIsVerifyingBlockchain(false);
+    }
+  };
+
+  const copyHashToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedHashString(text);
+    setTimeout(() => setCopiedHashString(null), 2000);
+  };
+
   // Determine Module category from Action
   const getActionModule = (action: string): string => {
+    if (action.startsWith('BLOCKCHAIN_')) return 'Blockchain';
     if (action.startsWith('EVIDENCE_DERIVED') || action.includes('FRAME') || action.includes('TRANSMUX')) return 'Video Analysis';
     if (action.startsWith('INTEGRITY')) return 'Integrity';
     if (action.startsWith('ACQUISITION')) return 'Acquisition';
@@ -118,6 +194,30 @@ export function RecordsModule() {
 
   const getActionBadge = (action: string) => {
     switch (action) {
+      case 'BLOCKCHAIN_ANCHOR_COMPLETED':
+        return (
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 whitespace-nowrap">
+            <Link2 size={11} /> BLOCKCHAIN ANCHORED
+          </span>
+        );
+      case 'BLOCKCHAIN_ANCHOR_FAILED':
+        return (
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
+            <AlertTriangle size={11} /> ANCHOR FAILED / OFFLINE
+          </span>
+        );
+      case 'BLOCKCHAIN_INTEGRITY_VERIFIED':
+        return (
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 whitespace-nowrap">
+            <Shield size={11} /> BLOCKCHAIN VERIFIED
+          </span>
+        );
+      case 'BLOCKCHAIN_INTEGRITY_FAILED':
+        return (
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 whitespace-nowrap">
+            <AlertTriangle size={11} /> VERIFICATION MISMATCH
+          </span>
+        );
       case 'EVIDENCE_DERIVED':
         return (
           <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 whitespace-nowrap">
@@ -185,6 +285,8 @@ export function RecordsModule() {
 
   const getModuleBadge = (moduleName: string) => {
     switch (moduleName) {
+      case 'Blockchain':
+        return <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50/70 px-1.5 py-0.5 rounded">Blockchain</span>;
       case 'Evidence':
         return <span className="text-[11px] font-medium text-indigo-700 bg-indigo-50/70 px-1.5 py-0.5 rounded">Evidence</span>;
       case 'Video Analysis':
@@ -277,6 +379,19 @@ export function RecordsModule() {
     });
   }, [logs, search, moduleFilter]);
 
+  const filteredCustodyEvents = useMemo(() => {
+    return custodyEvents.filter(event => {
+      const term = search.toLowerCase();
+      return (
+        event.action.toLowerCase().includes(term) ||
+        event.sha256.toLowerCase().includes(term) ||
+        (event.actor_username && event.actor_username.toLowerCase().includes(term)) ||
+        (event.previous_event_reference && event.previous_event_reference.toLowerCase().includes(term)) ||
+        (event.blockchain_tx_id && event.blockchain_tx_id.toLowerCase().includes(term))
+      );
+    });
+  }, [custodyEvents, search]);
+
   const handleGenerateReport = (reportId: string) => {
     setGeneratingReportId(reportId);
     setTimeout(() => {
@@ -351,111 +466,332 @@ export function RecordsModule() {
         {/* LEFT PANEL: Audit Log Table (~60% on desktop) */}
         <div className="flex-1 min-w-0 flex flex-col bg-white rounded-xl border border-gray-200 shadow-xs overflow-hidden">
           
-          {/* Audit Log Header & Filter bar */}
+          {/* Audit Log / Custody Header & Filter bar */}
           <div className="px-5 py-3.5 border-b border-gray-200 bg-gray-50/60 flex flex-wrap items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center gap-2">
-              <Shield size={16} className="text-indigo-600" />
-              <h2 className="text-sm font-bold text-gray-900">Chain of Custody Audit Trail</h2>
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-                {filteredLogs.length} events
-              </span>
-            </div>
-
-            {/* Filter by Module */}
-            <div className="flex items-center gap-2">
-              <Filter size={14} className="text-gray-400" />
-              <select
-                value={moduleFilter}
-                onChange={(e) => setModuleFilter(e.target.value)}
-                aria-label="Filter audit records by module"
-                className="text-xs bg-white border border-gray-200 rounded-md px-2.5 py-1 text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            {/* View Mode Toggle Tabs */}
+            <div className="flex items-center gap-1 bg-gray-200/80 p-0.5 rounded-lg border border-gray-200">
+              <button
+                onClick={() => setRecordViewMode('audit')}
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                  recordViewMode === 'audit'
+                    ? 'bg-white text-indigo-700 shadow-xs'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
               >
-                <option value="ALL">All Modules</option>
-                <option value="Evidence">Evidence</option>
-                <option value="Video Analysis">Video Analysis</option>
-                <option value="Recovery">Recovery</option>
-                <option value="AI Analysis">AI Analysis</option>
-                <option value="Acquisition">Acquisition</option>
-                <option value="Integrity">Integrity</option>
-              </select>
+                <Shield size={13} className="text-indigo-600" />
+                <span>Audit Trail ({filteredLogs.length})</span>
+              </button>
+              <button
+                onClick={() => setRecordViewMode('custody')}
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                  recordViewMode === 'custody'
+                    ? 'bg-white text-indigo-700 shadow-xs'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Link2 size={13} className={blockchainHealth?.available ? 'text-emerald-600' : 'text-amber-600'} />
+                <span>Chain of Custody & Blockchain ({filteredCustodyEvents.length})</span>
+              </button>
             </div>
-          </div>
 
-          {/* Audit Log Table Content */}
-          <div className="flex-1 overflow-auto">
-            {isLoading ? (
-              <div className="h-full flex items-center justify-center py-20">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-              </div>
-            ) : filteredLogs.length > 0 ? (
-              <table className="w-full min-w-[720px] text-left border-collapse">
-                <thead className="sticky top-0 bg-gray-50/95 backdrop-blur-xs border-b border-gray-200 z-10">
-                  <tr className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
-                    <th className="py-3 px-3.5 whitespace-nowrap">Timestamp (UTC)</th>
-                    <th className="py-3 px-3.5 whitespace-nowrap">Action</th>
-                    <th className="py-3 px-3.5 whitespace-nowrap">Module</th>
-                    <th className="py-3 px-3.5 whitespace-nowrap">Target Evidence</th>
-                    <th className="py-3 px-3.5 whitespace-nowrap">User</th>
-                    <th className="py-3 px-3.5 whitespace-nowrap">Result</th>
-                    <th className="py-3 px-3.5">Details</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 text-sm">
-                  {filteredLogs.map(log => {
-                    const moduleName = getActionModule(log.action);
-                    return (
-                      <tr 
-                        key={log.id} 
-                        onClick={() => setSelectedLog(log)}
-                        className="hover:bg-indigo-50/40 transition-colors cursor-pointer group"
-                      >
-                        <td className="py-3 px-3.5 font-mono text-xs text-gray-500 whitespace-nowrap">
-                          {new Date(log.created_at).toISOString().replace('T', ' ').substring(0, 19)}
-                        </td>
-                        <td className="py-3 px-3.5 whitespace-nowrap">
-                          {getActionBadge(log.action)}
-                        </td>
-                        <td className="py-3 px-3.5 whitespace-nowrap">
-                          {getModuleBadge(moduleName)}
-                        </td>
-                        <td className="py-3 px-3.5 font-mono text-xs font-semibold text-indigo-700 whitespace-nowrap">
-                          {log.target_identifier ? (
-                            <span className="group-hover:underline">{log.target_identifier}</span>
-                          ) : (
-                            <span className="text-gray-400 font-normal">—</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3.5 text-gray-700 text-xs font-medium whitespace-nowrap">
-                          <div className="flex items-center gap-1.5">
-                            <User size={13} className="text-gray-400" />
-                            <span>{log.username || 'System'}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-3.5 whitespace-nowrap">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            <Check size={10} /> SUCCESS
-                          </span>
-                        </td>
-                        <td className="py-3 px-3.5 max-w-xs">
-                          {formatDetailsSummary(log.details)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center max-w-sm mx-auto p-12">
-                <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mb-3 border border-gray-200">
-                  <Shield size={24} className="text-gray-400" />
-                </div>
-                <h3 className="text-base font-bold text-gray-900">No audit records match</h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  {search ? 'Try clearing your search filters.' : 'Importing, carving, or deriving evidence creates verifiable entries automatically.'}
-                </p>
+            {/* Filter by Module (shown when in audit mode) */}
+            {recordViewMode === 'audit' && (
+              <div className="flex items-center gap-2">
+                <Filter size={14} className="text-gray-400" />
+                <select
+                  value={moduleFilter}
+                  onChange={(e) => setModuleFilter(e.target.value)}
+                  aria-label="Filter audit records by module"
+                  className="text-xs bg-white border border-gray-200 rounded-md px-2.5 py-1 text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="ALL">All Modules</option>
+                  <option value="Blockchain">Blockchain</option>
+                  <option value="Evidence">Evidence</option>
+                  <option value="Video Analysis">Video Analysis</option>
+                  <option value="Recovery">Recovery</option>
+                  <option value="AI Analysis">AI Analysis</option>
+                  <option value="Acquisition">Acquisition</option>
+                  <option value="Integrity">Integrity</option>
+                </select>
               </div>
             )}
           </div>
+
+          {recordViewMode === 'audit' ? (
+            /* Audit Log Table Content */
+            <div className="flex-1 overflow-auto">
+              {isLoading ? (
+                <div className="h-full flex items-center justify-center py-20">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                </div>
+              ) : filteredLogs.length > 0 ? (
+                <table className="w-full min-w-[720px] text-left border-collapse">
+                  <thead className="sticky top-0 bg-gray-50/95 backdrop-blur-xs border-b border-gray-200 z-10">
+                    <tr className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                      <th className="py-3 px-3.5 whitespace-nowrap">Timestamp (UTC)</th>
+                      <th className="py-3 px-3.5 whitespace-nowrap">Action</th>
+                      <th className="py-3 px-3.5 whitespace-nowrap">Module</th>
+                      <th className="py-3 px-3.5 whitespace-nowrap">Target Evidence</th>
+                      <th className="py-3 px-3.5 whitespace-nowrap">User</th>
+                      <th className="py-3 px-3.5 whitespace-nowrap">Result</th>
+                      <th className="py-3 px-3.5">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 text-sm">
+                    {filteredLogs.map(log => {
+                      const moduleName = getActionModule(log.action);
+                      return (
+                        <tr 
+                          key={log.id} 
+                          onClick={() => setSelectedLog(log)}
+                          className="hover:bg-indigo-50/40 transition-colors cursor-pointer group"
+                        >
+                          <td className="py-3 px-3.5 font-mono text-xs text-gray-500 whitespace-nowrap">
+                            {new Date(log.created_at).toISOString().replace('T', ' ').substring(0, 19)}
+                          </td>
+                          <td className="py-3 px-3.5 whitespace-nowrap">
+                            {getActionBadge(log.action)}
+                          </td>
+                          <td className="py-3 px-3.5 whitespace-nowrap">
+                            {getModuleBadge(moduleName)}
+                          </td>
+                          <td className="py-3 px-3.5 font-mono text-xs font-semibold text-indigo-700 whitespace-nowrap">
+                            {log.target_identifier ? (
+                              <span className="group-hover:underline">{log.target_identifier}</span>
+                            ) : (
+                              <span className="text-gray-400 font-normal">—</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3.5 text-gray-700 text-xs font-medium whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <User size={13} className="text-gray-400" />
+                              <span>{log.username || 'System'}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3.5 whitespace-nowrap">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <Check size={10} /> SUCCESS
+                            </span>
+                          </td>
+                          <td className="py-3 px-3.5 max-w-xs">
+                            {formatDetailsSummary(log.details)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-center max-w-sm mx-auto p-12">
+                  <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mb-3 border border-gray-200">
+                    <Shield size={24} className="text-gray-400" />
+                  </div>
+                  <h3 className="text-base font-bold text-gray-900">No audit records match</h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {search ? 'Try clearing your search filters.' : 'Importing, carving, or deriving evidence creates verifiable entries automatically.'}
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Chronological Chain of Custody & Blockchain View */
+            <div className="flex-1 overflow-auto flex flex-col">
+              {/* Blockchain Health Status Banner */}
+              {blockchainHealth?.available ? (
+                <div className="m-4 mb-2 p-3 bg-emerald-50/90 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-950">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0 animate-pulse"></span>
+                    <span className="font-bold text-emerald-900">Blockchain Service: ONLINE</span>
+                    <span className="text-emerald-700 font-mono text-[11px]">
+                      ({blockchainHealth.network} • Channel: {blockchainHealth.channel || 'drishtikchannel'} • Blocks: #{blockchainHealth.current_block ?? 1})
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-emerald-800 font-medium">
+                    <span className="bg-emerald-100/80 px-2 py-0.5 rounded border border-emerald-200">
+                      Peer: {blockchainHealth.peer_endpoint || 'peer0.org1.example.com:7051'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="m-4 mb-2 p-3.5 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2.5 text-xs text-amber-950">
+                  <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-amber-950 flex items-center gap-2">
+                      <span>Blockchain Service: UNAVAILABLE</span>
+                      <span className="font-semibold text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-200 uppercase">OFFLINE / UNREACHABLE</span>
+                    </div>
+                    <p className="text-amber-800 mt-1 leading-relaxed">
+                      Blockchain anchoring unavailable. Local SHA-256 integrity and audit logging remain active.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Custody Timeline */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {isLoading ? (
+                  <div className="h-full flex items-center justify-center py-20">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                  </div>
+                ) : filteredCustodyEvents.length > 0 ? (
+                  <div className="relative border-l-2 border-indigo-100 ml-4 pl-6 space-y-6">
+                    {filteredCustodyEvents.map((event) => {
+                      const evTarget = evidenceList.find(e => e.id === event.evidence_id);
+                      return (
+                        <div key={event.id} className="relative group">
+                          {/* Timeline node icon */}
+                          <div className={`absolute -left-[31px] top-1.5 w-4 h-4 rounded-full border-2 bg-white flex items-center justify-center ${
+                            event.blockchain_status === 'ANCHORED' 
+                              ? 'border-emerald-500 bg-emerald-50' 
+                              : event.blockchain_status === 'UNAVAILABLE'
+                                ? 'border-amber-500 bg-amber-50'
+                                : 'border-indigo-400 bg-indigo-50'
+                          }`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${
+                              event.blockchain_status === 'ANCHORED' 
+                                ? 'bg-emerald-600' 
+                                : event.blockchain_status === 'UNAVAILABLE'
+                                  ? 'bg-amber-600'
+                                  : 'bg-indigo-600'
+                            }`}></div>
+                          </div>
+
+                          {/* Event Card */}
+                          <div className="bg-white p-3.5 rounded-lg border border-gray-200 hover:border-indigo-300 hover:shadow-xs transition-all flex flex-col gap-2">
+                            {/* Card Top Row: Timestamp, Action, Operator, Anchored badge */}
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-xs font-bold text-gray-800">
+                                  {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                </span>
+                                <span className="text-[11px] text-gray-400 font-mono">
+                                  ({new Date(event.timestamp).toISOString().split('T')[0]})
+                                </span>
+                                <span className="font-bold text-xs text-gray-900">
+                                  {event.action.replace(/_/g, ' ')}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">
+                                  <User size={10} className="text-gray-400" />
+                                  {event.actor_username || `User #${event.actor_id}`}
+                                </span>
+
+                                <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded ${
+                                  event.blockchain_status === 'ANCHORED'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : event.blockchain_status === 'UNAVAILABLE'
+                                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      : event.blockchain_status === 'FAILED'
+                                        ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                        : 'bg-gray-100 text-gray-600 border border-gray-200'
+                                }`}>
+                                  <Link2 size={10} />
+                                  {event.blockchain_status === 'ANCHORED' ? 'Blockchain Anchored' : event.blockchain_status}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Card Middle: Evidence ID, Previous Event Reference */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs pt-1 border-t border-gray-100">
+                              <div>
+                                <span className="text-gray-400 text-[10px] block">TARGET EVIDENCE</span>
+                                <span className="font-mono font-bold text-indigo-700">
+                                  {evTarget ? evTarget.evidence_identifier : `Evidence #${event.evidence_id}`}
+                                </span>
+                                {evTarget && (
+                                  <span className="text-gray-500 text-[11px] block truncate">
+                                    {evTarget.original_filename}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div>
+                                <span className="text-gray-400 text-[10px] block">PREVIOUS EVENT LINK</span>
+                                <span className="font-mono text-[11px] text-gray-700">
+                                  {event.previous_event_reference ? (
+                                    <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                      {event.previous_event_reference}
+                                    </span>
+                                  ) : (
+                                    <span className="text-emerald-700 font-semibold italic">Root Anchor (Genesis)</span>
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* SHA-256 and Transaction Hash */}
+                            <div className="space-y-1 pt-1 border-t border-gray-100 text-[11px]">
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-500 font-medium">Recorded SHA-256:</span>
+                                <button
+                                  onClick={() => copyHashToClipboard(event.sha256)}
+                                  className="text-indigo-600 hover:text-indigo-800 font-mono text-[10px] flex items-center gap-0.5"
+                                >
+                                  {copiedHashString === event.sha256 ? <span className="text-emerald-600">Copied!</span> : <><Copy size={10} /> Copy</>}
+                                </button>
+                              </div>
+                              <div className="font-mono text-[11px] bg-slate-50 p-1.5 rounded border border-slate-200 text-gray-800 break-all">
+                                {event.sha256}
+                              </div>
+
+                              {event.blockchain_tx_id && (
+                                <div className="mt-1">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-gray-500 font-medium">Transaction ID:</span>
+                                    <button
+                                      onClick={() => copyHashToClipboard(event.blockchain_tx_id!)}
+                                      className="text-indigo-600 hover:text-indigo-800 font-mono text-[10px] flex items-center gap-0.5"
+                                    >
+                                      {copiedHashString === event.blockchain_tx_id ? <span className="text-emerald-600">Copied!</span> : <><Copy size={10} /> Copy</>}
+                                    </button>
+                                  </div>
+                                  <div className="font-mono text-[11px] bg-slate-50 p-1.5 rounded border border-slate-200 text-gray-800 break-all">
+                                    {event.blockchain_tx_id}
+                                    {event.blockchain_block_number !== undefined && event.blockchain_block_number !== null && (
+                                      <span className="ml-2 font-sans text-gray-500">(Block #{event.blockchain_block_number})</span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Actions bar: Verify Integrity */}
+                            <div className="flex items-center justify-between pt-1 border-t border-gray-100">
+                              <span className="text-[10px] font-mono text-gray-400">
+                                Event ID: {event.event_identifier}
+                              </span>
+
+                              <button
+                                onClick={() => handleVerifyBlockchain(event.evidence_id, event.event_identifier)}
+                                disabled={isVerifyingBlockchain}
+                                className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded transition-colors disabled:opacity-50"
+                              >
+                                <Shield size={12} />
+                                {isVerifyingBlockchain ? 'Verifying...' : 'Verify Integrity'}
+                              </button>
+                            </div>
+
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-center max-w-sm mx-auto p-12">
+                    <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mb-3 border border-gray-200">
+                      <Link2 size={24} className="text-gray-400" />
+                    </div>
+                    <h3 className="text-base font-bold text-gray-900">No Chain of Custody Records</h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {search ? 'No custody events match your query.' : 'Evidence import, derivation, acquisition, and recovery automatically generate cryptographic custody records.'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* RIGHT PANEL: Forensic Reports & Export (~40% on desktop) */}
@@ -626,6 +962,97 @@ export function RecordsModule() {
                 </h4>
                 <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                   {formatDetailsSummary(selectedLog.details)}
+                </div>
+              </div>
+
+              {/* Hyperledger Fabric Blockchain Anchor Status (Section 8) */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Link2 size={13} className="text-indigo-600" />
+                    Hyperledger Fabric Blockchain Anchor
+                  </h4>
+                  {selectedLog.target_identifier && evidenceList.some(e => e.evidence_identifier === selectedLog.target_identifier) && (
+                    <button
+                      onClick={() => {
+                        const ev = evidenceList.find(e => e.evidence_identifier === selectedLog.target_identifier);
+                        if (ev) {
+                          handleVerifyBlockchain(ev.id, ev.evidence_identifier);
+                        }
+                      }}
+                      disabled={isVerifyingBlockchain}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded transition-colors disabled:opacity-50"
+                    >
+                      <Shield size={12} />
+                      {isVerifyingBlockchain ? 'Verifying...' : 'Verify Integrity'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-2.5 text-xs">
+                  {isLoadingLogBlockchain ? (
+                    <div className="flex items-center gap-2 py-2 text-gray-500">
+                      <RefreshCw size={13} className="animate-spin text-indigo-600" />
+                      <span>Checking blockchain ledger anchor status...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500 font-medium">Blockchain Status:</span>
+                        <span className={`font-bold px-2 py-0.5 rounded text-[11px] uppercase ${
+                          selectedLogBlockchain?.blockchain_status === 'ANCHORED'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            : selectedLogBlockchain?.blockchain_status === 'UNAVAILABLE'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                              : selectedLogBlockchain?.blockchain_status === 'FAILED'
+                                ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                : 'bg-gray-100 text-gray-700 border border-gray-200'
+                        }`}>
+                          {selectedLogBlockchain?.blockchain_status || (blockchainHealth?.available ? 'NOT ANCHORED' : 'UNAVAILABLE')}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-gray-200/70">
+                        <div>
+                          <span className="text-gray-500 text-[10px] block">TRANSACTION ID</span>
+                          <span className="font-mono text-[11px] text-gray-900 break-all">
+                            {selectedLogBlockchain?.transaction_id || selectedLogBlockchain?.anchors?.[0]?.transaction_id || (
+                              <span className="text-gray-400 italic">None recorded</span>
+                            )}
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-gray-500 text-[10px] block">BLOCK NUMBER</span>
+                          <span className="font-mono text-[11px] text-gray-900">
+                            {selectedLogBlockchain?.anchors?.[0]?.block_number !== undefined
+                              ? `#${selectedLogBlockchain.anchors[0].block_number}`
+                              : (blockchainHealth?.current_block ? `#${blockchainHealth.current_block}` : 'N/A')}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="pt-1 border-t border-gray-200/70 space-y-1.5">
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-gray-500">Anchor Timestamp:</span>
+                          <span className="font-mono text-gray-800">
+                            {selectedLogBlockchain?.anchored_at 
+                              ? new Date(selectedLogBlockchain.anchored_at).toUTCString()
+                              : selectedLogBlockchain?.anchors?.[0]?.timestamp
+                                ? new Date(selectedLogBlockchain.anchors[0].timestamp).toUTCString()
+                                : 'N/A'}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-gray-500 text-[10px]">ANCHORED SHA-256</span>
+                          <span className="font-mono text-[11px] bg-white p-1.5 rounded border border-gray-200 text-gray-800 break-all">
+                            {selectedLogBlockchain?.sha256 || 'N/A (Off-chain local record only)'}
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -853,6 +1280,108 @@ export function RecordsModule() {
 
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: 3-Point Blockchain Integrity Verification Modal */}
+      {verificationResult && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between bg-gray-50/80">
+              <div className="flex items-center gap-2">
+                <Shield size={18} className="text-indigo-600" />
+                <h3 className="text-sm font-bold text-gray-900">Blockchain Integrity Verification</h3>
+              </div>
+              <button
+                onClick={() => setVerificationResult(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 text-xs">
+              <div className={`p-3.5 rounded-lg border flex items-center gap-3 ${
+                verificationResult.overall_status === 'VERIFIED'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : verificationResult.overall_status === 'MISMATCH'
+                    ? 'bg-rose-50 border-rose-200 text-rose-900'
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+              }`}>
+                {verificationResult.overall_status === 'VERIFIED' ? (
+                  <CheckCircle className="text-emerald-600 shrink-0" size={24} />
+                ) : verificationResult.overall_status === 'MISMATCH' ? (
+                  <AlertTriangle className="text-rose-600 shrink-0" size={24} />
+                ) : (
+                  <Info className="text-amber-600 shrink-0" size={24} />
+                )}
+                <div>
+                  <div className="font-bold text-sm">
+                    Status: {verificationResult.overall_status}
+                  </div>
+                  <div className="text-[11px] mt-0.5 leading-relaxed">
+                    {verificationResult.reason}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-gray-700 uppercase tracking-wider mb-2 text-[11px]">
+                  3-Point Forensic Hash Audit
+                </h4>
+                <div className="border border-gray-200 rounded-lg overflow-hidden divide-y divide-gray-200">
+                  <div className="p-2.5 bg-gray-50 flex flex-col gap-1">
+                    <span className="font-semibold text-gray-700">1. Current Evidence SHA-256 (Disk Live)</span>
+                    <span className="font-mono text-[11px] text-gray-800 break-all bg-white p-1.5 rounded border border-gray-200">
+                      {verificationResult.current_sha256}
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 bg-gray-50 flex flex-col gap-1">
+                    <span className="font-semibold text-gray-700">2. Recorded Evidence SHA-256 (Case DB)</span>
+                    <span className="font-mono text-[11px] text-gray-800 break-all bg-white p-1.5 rounded border border-gray-200">
+                      {verificationResult.recorded_sha256}
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 bg-gray-50 flex flex-col gap-1">
+                    <span className="font-semibold text-gray-700">3. Blockchain Anchor SHA-256 (Hyperledger Fabric)</span>
+                    <span className="font-mono text-[11px] text-gray-800 break-all bg-white p-1.5 rounded border border-gray-200">
+                      {verificationResult.anchored_sha256 || 'Not anchored / Unavailable'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 bg-gray-50 p-2.5 rounded-lg border border-gray-200 font-mono text-[11px]">
+                <div>
+                  <span className="text-gray-500 font-sans block text-[10px]">TRANSACTION ID</span>
+                  <span className="truncate block font-semibold text-gray-800" title={verificationResult.transaction_id}>
+                    {verificationResult.transaction_id || 'N/A'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500 font-sans block text-[10px]">BLOCK NUMBER</span>
+                  <span className="font-semibold text-gray-800">
+                    {verificationResult.block_number !== undefined && verificationResult.block_number !== null ? `#${verificationResult.block_number}` : 'N/A'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 bg-slate-100 rounded-lg border border-slate-200 text-[11px] text-slate-700 leading-relaxed">
+                <strong>Forensic Scope Limitation:</strong> Blockchain verification proves data consistency and integrity of the recorded hash at timestamp. It does NOT prove the authenticity of the CCTV source recording or the truthfulness of the video content.
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setVerificationResult(null)}
+                className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-md hover:bg-gray-100 transition-colors"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
