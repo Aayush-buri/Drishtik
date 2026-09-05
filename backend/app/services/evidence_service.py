@@ -7,11 +7,18 @@ from pathlib import Path
 from fastapi import UploadFile, HTTPException
 from sqlalchemy.orm import Session
 
+import logging
 from app.models.case import Case
 from app.models.evidence import Evidence, IntegrityStatus, ProcessingStatus, EvidenceStatus
 from app.models.audit import AuditLog
-from app.schemas.evidence import CompareResponse, CompareItem
+from app.schemas.evidence import (
+    CompareResponse, CompareItem, HexPreviewResponse, HexPreviewRow, FormatAnalysisResponse
+)
 from app.services.video_processing import process_derived_video, extract_video_metadata
+from app.forensics.signatures.signature_probe import probe_file
+from app.forensics.vendor_adapter import get_best_adapter_for_file, get_ffmpeg_executable
+
+logger = logging.getLogger(__name__)
 
 CHUNK_SIZE = 8192
 
@@ -67,20 +74,57 @@ async def import_evidence(db: Session, case: Case, file: UploadFile, user_id: in
     integrity_status = IntegrityStatus.VERIFIED
     evidence_identifier = f"EVD-{unique_id[:6].upper()}"
     
-    if ext in ['.mp4', '.avi', '.mkv', '.dav', '.mov']:
+    # Binary magic-byte probe strictly overrides extension
+    probe_result = probe_file(storage_path)
+
+    if probe_result.vendor in ("Dahua", "Hikvision") or probe_result.format_name in (
+        "Dahua DAV", "Hikvision HIKV", "Hikvision HIKB", "Hikvision HIKT",
+        "Hikvision MPEG-PS", "Standard MP4", "Standard MKV", "Standard AVI",
+        "Raw H.264 Elementary Stream", "Raw H.265 Elementary Stream"
+    ):
+        media_type = 'Video'
+    elif ext in ['.mp4', '.avi', '.mkv', '.dav', '.mov']:
         media_type = 'Video'
     elif ext in ['.jpg', '.jpeg', '.png', '.bmp']:
         media_type = 'Image'
     else:
         media_type = 'Other'
 
-    # Technical metadata extraction
+    # Technical and CCTV vendor metadata extraction
     meta = {}
     if media_type == 'Video':
         try:
             meta = extract_video_metadata(str(storage_path))
         except Exception:
             pass
+
+    # Extract vendor-specific CCTV metadata (e.g., Dahua OSD timestamps and channel)
+    adapter = get_best_adapter_for_file(storage_path)
+    cctv_meta = {}
+    try:
+        cctv_meta = adapter.get_metadata(storage_path)
+    except Exception as e:
+        logger.warning("Could not extract CCTV metadata for %s: %s", evidence_identifier, e)
+
+    start_time_osd = None
+    if cctv_meta.get("start_time_osd"):
+        try:
+            start_time_osd = datetime.fromisoformat(cctv_meta["start_time_osd"])
+        except Exception:
+            pass
+
+    end_time_osd = None
+    if cctv_meta.get("end_time_osd"):
+        try:
+            end_time_osd = datetime.fromisoformat(cctv_meta["end_time_osd"])
+        except Exception:
+            pass
+
+    channel_index = cctv_meta.get("channel_index")
+    resolved_vendor = adapter.vendor_name if adapter.vendor_name != "Generic" else probe_result.vendor
+    resolved_format = cctv_meta.get("format") or probe_result.format_name
+
+    logger.info("FORMAT_DETECTED: Detected %s format (%s) for %s", resolved_vendor, resolved_format, evidence_identifier)
         
     db_evidence = Evidence(
         case_id=case.id,
@@ -104,8 +148,14 @@ async def import_evidence(db: Session, case: Case, file: UploadFile, user_id: in
         fps=meta.get("fps"),
         video_codec=meta.get("video_codec"),
         audio_codec=meta.get("audio_codec"),
-        container=meta.get("container"),
+        container=meta.get("container") or resolved_format,
         bitrate_kbps=meta.get("bitrate_kbps"),
+        vendor=resolved_vendor,
+        proprietary_format=resolved_format,
+        channel_index=channel_index,
+        start_time_osd=start_time_osd,
+        end_time_osd=end_time_osd,
+        is_natively_playable=probe_result.is_natively_playable,
         imported_by=user_id
     )
     
@@ -396,3 +446,240 @@ def soft_delete_evidence(
 
     db.commit()
     return deleted_items
+
+
+def generate_inspection_proxy(
+    db: Session,
+    case: Case,
+    evidence: Evidence,
+    user_id: int
+) -> Evidence:
+    """Generate a web inspection proxy (DERIVED Evidence) for proprietary CCTV files.
+
+    If the proprietary container contains a usable standard video payload and safe
+    transmuxing is supported, creates a DERIVED evidence record without modifying
+    the original evidence.
+    If transmuxing is unsupported, raises HTTPException without faking playback.
+    """
+    if evidence.case_id != case.id:
+        raise HTTPException(status_code=403, detail="Evidence does not belong to specified case")
+
+    if evidence.is_deleted:
+        raise HTTPException(status_code=400, detail="Cannot generate proxy for deleted evidence")
+
+    # Check if active inspection proxy already exists for this evidence
+    existing_proxy = db.query(Evidence).filter(
+        Evidence.parent_evidence_id == evidence.id,
+        Evidence.derived_operation == "PROPRIETARY_TRANSMUX_PROXY",
+        Evidence.is_deleted == False
+    ).first()
+    if existing_proxy:
+        return existing_proxy
+
+    source_path = Path(evidence.storage_path)
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail="Source evidence file is missing from disk")
+
+    adapter = get_best_adapter_for_file(source_path)
+    logger.info("VENDOR_SELECTED: Best adapter %s selected for %s", adapter.vendor_name, evidence.evidence_identifier)
+
+    if not adapter.can_transmux(source_path):
+        logger.warning("DECODER_UNAVAILABLE: Transmux unavailable for %s (%s)", adapter.vendor_name, evidence.evidence_identifier)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Web inspection proxy unavailable for {adapter.vendor_name} "
+                f"({evidence.proprietary_format or 'proprietary format'}). "
+                "Full proprietary decoder/transmuxer is not currently available. "
+                "Original bitstream must be analyzed with native vendor tools."
+            )
+        )
+
+    logger.info("PARSER_STARTED: Parsing %s container for %s", adapter.vendor_name, evidence.evidence_identifier)
+    logger.info("PARSER_COMPLETED: Finished parsing container for %s", evidence.evidence_identifier)
+    logger.info("DECODER_SELECTED: Selected decoder/transmuxer for %s", adapter.vendor_name)
+    logger.info("PROXY_STARTED: Generating web proxy for %s", evidence.evidence_identifier)
+
+    # Pre-hash original evidence
+    orig_sha_before, _ = compute_file_hashes(source_path)
+
+    # Destination derived proxy path
+    unique_id = uuid.uuid4().hex
+    derived_dir = get_case_evidence_dir(case.case_identifier, "derived")
+    output_path = derived_dir / f"{unique_id}_proxy.mp4"
+
+    try:
+        adapter.transmux_to_proxy(source_path, output_path)
+    except Exception as e:
+        logger.error("PROXY_FAILED: Failed to generate proxy for %s: %s", evidence.evidence_identifier, e)
+        if output_path.exists():
+            output_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate proxy: {str(e)}")
+
+    # Calculate hashes of derived proxy
+    derived_sha, derived_md5 = compute_file_hashes(output_path)
+    derived_size = output_path.stat().st_size
+
+    # Verify original evidence was NOT modified
+    orig_sha_after, _ = compute_file_hashes(source_path)
+    if orig_sha_after != orig_sha_before:
+        if output_path.exists():
+            output_path.unlink(missing_ok=True)
+        raise RuntimeError("FATAL FORENSIC INTEGRITY VIOLATION: Original evidence was modified during proxy generation!")
+
+    # Extract metadata from derived proxy
+    meta = {}
+    try:
+        meta = extract_video_metadata(str(output_path))
+    except Exception:
+        pass
+
+    proxy_identifier = f"EVD-{unique_id[:6].upper()}"
+    stem_name = Path(evidence.original_filename).stem
+
+    db_derived = Evidence(
+        case_id=case.id,
+        evidence_identifier=proxy_identifier,
+        original_filename=f"{stem_name}_proxy.mp4",
+        storage_path=str(output_path),
+        source_type="Derived Inspection Proxy",
+        media_type="Video",
+        file_extension=".mp4",
+        size_bytes=derived_size,
+        sha256=derived_sha,
+        md5_reference=derived_md5,
+        source_sha256=derived_sha,
+        stored_sha256=derived_sha,
+        integrity_status=IntegrityStatus.VERIFIED,
+        processing_status=ProcessingStatus.COMPLETED,
+        evidence_status=EvidenceStatus.DERIVED,
+        parent_evidence_id=evidence.id,
+        derived_operation="PROPRIETARY_TRANSMUX_PROXY",
+        derived_parameters=json.dumps({
+            "source_vendor": adapter.vendor_name,
+            "source_format": evidence.proprietary_format,
+            "source_identifier": evidence.evidence_identifier,
+            "channel_index": evidence.channel_index,
+            "start_time_osd": evidence.start_time_osd.isoformat() if evidence.start_time_osd else None,
+            "end_time_osd": evidence.end_time_osd.isoformat() if evidence.end_time_osd else None,
+        }),
+        duration_seconds=meta.get("duration_seconds") or evidence.duration_seconds,
+        width=meta.get("width") or evidence.width,
+        height=meta.get("height") or evidence.height,
+        fps=meta.get("fps") or evidence.fps,
+        video_codec=meta.get("video_codec") or "h264",
+        audio_codec=meta.get("audio_codec"),
+        container="Standard MP4 (Proxy)",
+        bitrate_kbps=meta.get("bitrate_kbps") or evidence.bitrate_kbps,
+        vendor="Generic",
+        proprietary_format="Standard MP4 (Proxy)",
+        channel_index=evidence.channel_index,
+        start_time_osd=evidence.start_time_osd,
+        end_time_osd=evidence.end_time_osd,
+        is_natively_playable=True,
+        imported_by=user_id
+    )
+
+    db.add(db_derived)
+    db.commit()
+    db.refresh(db_derived)
+
+    # Forensic audit log
+    audit = AuditLog(
+        case_id=case.id,
+        user_id=user_id,
+        action="EVIDENCE_DERIVED_PROXY",
+        target_identifier=proxy_identifier,
+        details=json.dumps({
+            "parent_id": evidence.evidence_identifier,
+            "child_id": proxy_identifier,
+            "operation": "PROPRIETARY_TRANSMUX_PROXY",
+            "source_vendor": adapter.vendor_name,
+            "source_format": evidence.proprietary_format,
+            "sha256": derived_sha
+        })
+    )
+    db.add(audit)
+    db.commit()
+
+    logger.info("PROXY_COMPLETED: Proxy %s generated for parent %s", proxy_identifier, evidence.evidence_identifier)
+    return db_derived
+
+
+def get_format_analysis(db: Session, case: Case, evidence: Evidence) -> FormatAnalysisResponse:
+    """Analyze proprietary or standard evidence format and return honest capabilities."""
+    if evidence.case_id != case.id:
+        raise HTTPException(status_code=403, detail="Evidence does not belong to specified case")
+
+    source_path = Path(evidence.storage_path)
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail="Evidence file missing on disk")
+
+    probe = probe_file(source_path)
+    adapter = get_best_adapter_for_file(source_path)
+    meta = adapter.get_metadata(source_path)
+
+    parser_avail = meta.get("parser_status") == "Available" or probe.vendor == "Generic"
+    can_transmux = adapter.can_transmux(source_path)
+    decoder_avail = can_transmux or (probe.vendor == "Generic" and probe.is_natively_playable)
+    proxy_avail = can_transmux
+
+    # Diagnostic status classification
+    if probe.format_name == "Unknown / Unrecognized":
+        status_str = "UNKNOWN FORMAT"
+    elif probe.is_proprietary and not parser_avail:
+        status_str = "UNSUPPORTED PROPRIETARY FORMAT"
+    elif probe.is_proprietary and parser_avail and not decoder_avail:
+        status_str = "DECODER UNAVAILABLE"
+    elif not probe.is_proprietary and not decoder_avail:
+        status_str = "CORRUPTED BITSTREAM"
+    else:
+        status_str = "SUPPORTED"
+
+    return FormatAnalysisResponse(
+        evidence_id=evidence.id,
+        evidence_identifier=evidence.evidence_identifier,
+        vendor=adapter.vendor_name if adapter.vendor_name != "Generic" else probe.vendor,
+        format=meta.get("format") or probe.format_name,
+        signature=probe.magic_hex,
+        confidence=probe.confidence,
+        native_playback=probe.is_natively_playable,
+        parser_available=parser_avail,
+        decoder_available=decoder_avail,
+        proxy_available=proxy_avail,
+        status=status_str,
+        metadata=meta
+    )
+
+
+def get_hex_preview(evidence: Evidence, max_bytes: int = 512) -> HexPreviewResponse:
+    """Safely reads the first up to 512 bytes of authorized evidence and returns offset, hex, and ASCII rows."""
+    path = Path(evidence.storage_path)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Evidence file is missing on disk")
+
+    try:
+        with open(path, "rb") as f:
+            data = f.read(min(max_bytes, 4096))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read evidence header: {str(e)}")
+
+    rows = []
+    for i in range(0, len(data), 16):
+        chunk = data[i : i + 16]
+        offset_str = f"{i:08X}"
+        hex_str = " ".join(f"{b:02X}" for b in chunk)
+        ascii_str = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
+        rows.append(HexPreviewRow(
+            offset=offset_str,
+            hex_bytes=hex_str,
+            ascii_text=ascii_str
+        ))
+
+    return HexPreviewResponse(
+        evidence_id=evidence.id,
+        evidence_identifier=evidence.evidence_identifier,
+        total_bytes_inspected=len(data),
+        rows=rows
+    )
+

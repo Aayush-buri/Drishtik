@@ -1,7 +1,9 @@
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Query
-from sqlalchemy.orm import Session
+from typing import List, Optional
+from pathlib import Path
 import os
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Query
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.case import CaseMember, RoleEnum
@@ -12,7 +14,8 @@ from app.models.user import User
 from app.models.audit import AuditLog
 from app.schemas.evidence import (
     EvidenceResponse, VerifyResponse, CompareRequest, CompareResponse,
-    DeriveEvidenceRequest, BatchDeleteRequest, BatchDeleteResponse, AuditLogResponse
+    DeriveEvidenceRequest, BatchDeleteRequest, BatchDeleteResponse, AuditLogResponse,
+    HexPreviewResponse, FormatAnalysisResponse
 )
 from app.dependencies.auth import (
     require_case_member, require_case_investigator_or_admin, require_case_admin, get_current_user
@@ -258,3 +261,129 @@ def stream_evidence_endpoint(
         
     content_type = f"video/{evidence.file_extension.strip('.')}" if evidence.media_type == "Video" else "application/octet-stream"
     return range_requests_response(request, evidence.storage_path, content_type)
+
+
+@router.post("/{case_identifier}/evidence/{evidence_id}/generate-proxy", response_model=EvidenceResponse)
+def generate_proxy_endpoint(
+    case_identifier: str,
+    evidence_id: int,
+    member: CaseMember = Depends(require_case_investigator_or_admin),
+    db: Session = Depends(get_db)
+):
+    """Generate a web inspection proxy (DERIVED Evidence) for proprietary video evidence.
+
+    If a real safe transmux operation is supported, generates a DERIVED evidence record.
+    If transmuxing is unsupported for the vendor format, returns an honest error without fake playback.
+    """
+    evidence = db.query(Evidence).filter(
+        Evidence.case_id == member.case.id,
+        Evidence.id == evidence_id,
+        Evidence.is_deleted == False
+    ).first()
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Evidence not found or has been removed")
+
+    proxy_evidence = evidence_service.generate_inspection_proxy(
+        db=db,
+        case=member.case,
+        evidence=evidence,
+        user_id=member.user_id
+    )
+    return _populate_evidence_fields(proxy_evidence, db)
+
+
+@router.get("/{case_identifier}/evidence/{evidence_id}/hex-preview", response_model=HexPreviewResponse)
+def hex_preview_endpoint(
+    case_identifier: str,
+    evidence_id: int,
+    member: CaseMember = Depends(require_case_member),
+    db: Session = Depends(get_db)
+):
+    """Safely previews the first 512 bytes of authorized evidence in hexadecimal and ASCII formatting."""
+    evidence = db.query(Evidence).filter(
+        Evidence.case_id == member.case.id,
+        Evidence.id == evidence_id,
+        Evidence.is_deleted == False
+    ).first()
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Evidence not found or has been removed")
+
+    return evidence_service.get_hex_preview(evidence, max_bytes=512)
+    
+
+@router.get("/{case_identifier}/evidence/{evidence_id}/format-analysis", response_model=FormatAnalysisResponse)
+def get_format_analysis_endpoint(
+    case_identifier: str,
+    evidence_id: int,
+    member: CaseMember = Depends(require_case_member),
+    db: Session = Depends(get_db)
+):
+    """Inspects proprietary or standard evidence and returns vendor, parser, decoder, and proxy status."""
+    evidence = db.query(Evidence).filter(
+        Evidence.case_id == member.case.id,
+        Evidence.id == evidence_id,
+        Evidence.is_deleted == False
+    ).first()
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Evidence not found or has been removed")
+
+    return evidence_service.get_format_analysis(db=db, case=member.case, evidence=evidence)
+
+
+def get_current_user_flexible(
+    request: Request,
+    access_token: Optional[str] = Query(None, description="Optional access token for direct browser downloads"),
+    db: Session = Depends(get_db),
+) -> User:
+    auth_header = request.headers.get("Authorization")
+    token: Optional[str] = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+    elif access_token:
+        token = access_token
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required (Bearer token or access_token query param)")
+
+    return get_current_user(token=token, db=db)
+
+
+def require_case_member_download(
+    case_identifier: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible),
+) -> CaseMember:
+    """Flexible auth dependency allowing either Bearer token header or ?access_token= query param."""
+    return require_case_member(case_identifier=case_identifier, case_id=None, current_user=current_user, db=db)
+
+
+
+@router.get("/{case_identifier}/evidence/{evidence_id}/download-original")
+def download_original_evidence_endpoint(
+    case_identifier: str,
+    evidence_id: int,
+    member: CaseMember = Depends(require_case_member_download),
+    db: Session = Depends(get_db)
+):
+    """Securely downloads original proprietary evidence without altering any bytes.
+
+    Only accessible to authorized members of the specific case.
+    """
+    evidence = db.query(Evidence).filter(
+        Evidence.case_id == member.case.id,
+        Evidence.id == evidence_id,
+        Evidence.is_deleted == False
+    ).first()
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Evidence not found or has been removed")
+
+    storage_path = Path(evidence.storage_path).resolve()
+    if not storage_path.exists() or not storage_path.is_file():
+        raise HTTPException(status_code=404, detail="Original evidence file missing from vault")
+
+    return FileResponse(
+        path=str(storage_path),
+        filename=evidence.original_filename,
+        media_type="application/octet-stream"
+    )
+

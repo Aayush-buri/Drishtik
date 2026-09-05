@@ -62,6 +62,14 @@ class Evidence(Base):
     container = Column(String, nullable=True)
     bitrate_kbps = Column(Integer, nullable=True)
 
+    # Vendor & CCTV Container Metadata
+    vendor = Column(String(100), nullable=True)
+    proprietary_format = Column(String(50), nullable=True)
+    channel_index = Column(Integer, nullable=True)
+    start_time_osd = Column(DateTime(timezone=True), nullable=True)
+    end_time_osd = Column(DateTime(timezone=True), nullable=True)
+    is_natively_playable = Column(Boolean, default=True, nullable=False)
+
     # Soft Delete / Retention
     is_deleted = Column(Boolean, default=False, nullable=False, index=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)

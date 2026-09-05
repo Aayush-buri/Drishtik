@@ -56,6 +56,14 @@ class EvidenceResponse(EvidenceBase):
     container: Optional[str] = None
     bitrate_kbps: Optional[int] = None
 
+    # Vendor & CCTV Container Metadata
+    vendor: Optional[str] = None
+    proprietary_format: Optional[str] = None
+    channel_index: Optional[int] = None
+    start_time_osd: Optional[datetime] = None
+    end_time_osd: Optional[datetime] = None
+    is_natively_playable: bool = True
+
     # Soft Delete
     is_deleted: bool = False
     deleted_at: Optional[datetime] = None
@@ -63,6 +71,36 @@ class EvidenceResponse(EvidenceBase):
     deletion_reason: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class HexPreviewRow(BaseModel):
+    offset: str
+    hex_bytes: str
+    ascii_text: str
+
+
+class HexPreviewResponse(BaseModel):
+    evidence_id: int
+    evidence_identifier: str
+    total_bytes_inspected: int
+    rows: List[HexPreviewRow]
+
+
+class FormatAnalysisResponse(BaseModel):
+    evidence_id: int
+    evidence_identifier: str
+    vendor: str
+    format: str
+    signature: Optional[str] = None
+    confidence: float
+    native_playback: bool
+    parser_available: bool
+    decoder_available: bool
+    proxy_available: bool
+    status: str
+    metadata: dict = {}
+
+
 
 class VerifyResponse(BaseModel):
     evidence_identifier: str

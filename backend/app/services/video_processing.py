@@ -119,3 +119,30 @@ def process_derived_video(
     result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
     if result.returncode != 0:
         raise RuntimeError(f"FFmpeg processing failed (code {result.returncode}): {result.stderr}")
+
+
+def extract_frame_image(input_path: str, output_path: str, media_time: float) -> None:
+    """Extracts a single high-quality still frame image at media_time.
+
+    The original video is opened purely in read-only mode and is not modified.
+    """
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"Input evidence file not found: {input_path}")
+
+    ffmpeg_exe = get_ffmpeg_binary()
+    seek_time = max(0.0, float(media_time))
+
+    cmd = [
+        ffmpeg_exe,
+        "-y",
+        "-ss", f"{seek_time:.3f}",
+        "-i", input_path,
+        "-vframes", "1",
+        "-q:v", "2",
+        output_path
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    if result.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        raise RuntimeError(f"Frame extraction failed: {result.stderr[-300:] if result.stderr else 'Unknown error'}")
+

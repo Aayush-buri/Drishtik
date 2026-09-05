@@ -15,7 +15,9 @@ from app.models.evidence import Evidence, IntegrityStatus, ProcessingStatus, Evi
 from app.models.audit import AuditLog
 from app.forensics.acquisition import get_acquisition_adapter
 from app.forensics.device_provider import get_device_provider
+from app.forensics.signatures.signature_probe import probe_file
 from app.services.video_processing import extract_video_metadata
+
 
 def get_case_acquisition_dir(case_identifier: str, acquisition_identifier: str) -> Path:
     vault_dir = Path("data") / "case_data" / case_identifier / "acquisitions" / acquisition_identifier
@@ -279,8 +281,17 @@ def create_evidence_from_acquisition(
         # Directory acquisition: zip or reference
         shutil.copytree(acquired_path, evidence_storage_path)
 
+    # Probe file signature
+    probe_result = probe_file(evidence_storage_path) if evidence_storage_path.is_file() else None
+
     # Determine media type
-    if ext in ['.mp4', '.avi', '.mkv', '.dav', '.mov']:
+    if probe_result and (probe_result.vendor in ("Dahua", "Hikvision") or probe_result.format_name in (
+        "Dahua DAV", "Hikvision HIKV", "Hikvision HIKB", "Hikvision HIKT",
+        "Hikvision MPEG-PS", "Standard MP4", "Standard MKV", "Standard AVI",
+        "Raw H.264 Elementary Stream", "Raw H.265 Elementary Stream"
+    )):
+        media_type = 'Video'
+    elif ext in ['.mp4', '.avi', '.mkv', '.dav', '.mov']:
         media_type = 'Video'
     elif ext in ['.jpg', '.jpeg', '.png', '.bmp']:
         media_type = 'Image'
@@ -321,10 +332,14 @@ def create_evidence_from_acquisition(
         fps=meta.get("fps"),
         video_codec=meta.get("video_codec"),
         audio_codec=meta.get("audio_codec"),
-        container=meta.get("container"),
+        container=meta.get("container") or (probe_result.format_name if probe_result else None),
         bitrate_kbps=meta.get("bitrate_kbps"),
+        vendor=probe_result.vendor if probe_result else None,
+        proprietary_format=probe_result.format_name if probe_result else None,
+        is_natively_playable=probe_result.is_natively_playable if probe_result else True,
         imported_by=user_id
     )
+
     db.add(evidence)
     db.commit()
     db.refresh(evidence)

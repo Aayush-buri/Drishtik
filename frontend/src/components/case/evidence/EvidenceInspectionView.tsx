@@ -10,6 +10,8 @@ import type { Evidence } from '../../../services/evidenceService';
 import { useAuth } from '../../../hooks/useAuth';
 import { Badge } from '../../ui/Badge';
 import { CreateDerivedClipModal } from './CreateDerivedClipModal';
+import { ForensicFormatAdvisory } from './ForensicFormatAdvisory';
+import { HexPreviewModal } from './HexPreviewModal';
 
 export function EvidenceInspectionView() {
   const { caseId, evidenceId } = useParams();
@@ -22,8 +24,10 @@ export function EvidenceInspectionView() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [copiedHash, setCopiedHash] = useState<'sha256' | 'md5' | null>(null);
 
-  // Derivation modal state
+  // Derivation & Hex Preview modal states
   const [isDerivedModalOpen, setIsDerivedModalOpen] = useState(false);
+  const [isHexPreviewOpen, setIsHexPreviewOpen] = useState(false);
+
 
   // Video Metadata
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -183,15 +187,28 @@ export function EvidenceInspectionView() {
           </div>
         </div>
 
-        {canDerive && (
-          <button
-            onClick={() => setIsDerivedModalOpen(true)}
-            className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-sm transition-colors flex items-center gap-2"
-          >
-            <Film size={15} />
-            Create Derived Clip
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {evidence.media_type === 'Video' && (
+            <button
+              onClick={() => navigate(`/case/${caseId}/video-analysis/${evidence.id}`)}
+              className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-sm transition-colors flex items-center gap-2"
+              title="Open Unified Forensic Video Analysis Workspace"
+            >
+              <PlayCircle size={15} />
+              Forensic Video Analysis
+            </button>
+          )}
+
+          {canDerive && (
+            <button
+              onClick={() => setIsDerivedModalOpen(true)}
+              className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-sm transition-colors flex items-center gap-2"
+            >
+              <Film size={15} />
+              Create Derived Clip
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Main Workspace (Two-Column Layout) */}
@@ -230,19 +247,54 @@ export function EvidenceInspectionView() {
             )}
           </div>
 
+          {evidence.derived_operation === 'PROPRIETARY_TRANSMUX_PROXY' && (
+            <div className="bg-indigo-950/90 border-b border-indigo-800/80 px-4 py-2 flex items-center justify-between text-xs text-indigo-200 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
+                <span className="font-bold text-white tracking-wide">PLAYING DERIVED INSPECTION PROXY</span>
+              </div>
+              {evidence.parent_evidence_identifier && (
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400">Original Evidence:</span>
+                  <span className="font-mono font-bold text-amber-300">{evidence.parent_evidence_identifier}</span>
+                  {evidence.parent_evidence_id && (
+                    <button
+                      onClick={() => navigate(`/case/${caseId}/evidence/${evidence.parent_evidence_id}`)}
+                      className="text-indigo-400 hover:text-white underline ml-1"
+                    >
+                      View Original
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex-1 flex items-center justify-center p-6 bg-black overflow-hidden relative">
             {evidence.media_type === 'Video' ? (
-              <video 
-                ref={videoRef}
-                controls 
-                preload="metadata"
-                onLoadedMetadata={handleLoadedMetadata}
-                className="w-full max-h-[60vh] aspect-video object-contain outline-none shadow-2xl"
-                src={`/api/v1/cases/${activeCase?.case_identifier}/evidence/${evidence.id}/stream?access_token=${localStorage.getItem('drishtik_token')}`}
-              >
-                Preview unavailable for this format
-              </video>
+              evidence.is_natively_playable === false ? (
+                <ForensicFormatAdvisory
+                  evidence={evidence}
+                  caseId={activeCase?.case_identifier || caseId || ''}
+                  onOpenHexPreview={() => setIsHexPreviewOpen(true)}
+                  onProxyGenerated={(proxy) => {
+                    navigate(`/case/${activeCase?.case_identifier || caseId}/evidence/${proxy.id}`);
+                  }}
+                />
+              ) : (
+                <video 
+                  ref={videoRef}
+                  controls 
+                  preload="metadata"
+                  onLoadedMetadata={handleLoadedMetadata}
+                  className="w-full max-h-[60vh] aspect-video object-contain outline-none shadow-2xl"
+                  src={`/api/v1/cases/${activeCase?.case_identifier}/evidence/${evidence.id}/stream?access_token=${localStorage.getItem('drishtik_token')}`}
+                >
+                  Preview unavailable for this format
+                </video>
+              )
             ) : evidence.media_type === 'Image' ? (
+
               <img 
                 className="max-w-full max-h-full object-contain shadow-2xl"
                 src={`/api/v1/cases/${activeCase?.case_identifier}/evidence/${evidence.id}/stream?access_token=${localStorage.getItem('drishtik_token')}`}
@@ -475,8 +527,65 @@ export function EvidenceInspectionView() {
               </section>
             )}
 
+            {/* CCTV & VENDOR CONTAINER METADATA */}
+            <section className="bg-gray-50/80 p-4 rounded-xl border border-gray-200">
+              <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Cpu size={14} className="text-indigo-600" />
+                CCTV / DVR Vendor Information
+              </h3>
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+                <div>
+                  <dt className="text-gray-500 mb-0.5">Identified Vendor</dt>
+                  <dd className="font-bold text-gray-900">{evidence.vendor || 'Generic / Standard'}</dd>
+                </div>
+                <div>
+                  <dt className="text-gray-500 mb-0.5">Container Format</dt>
+                  <dd className="font-medium text-indigo-700 truncate" title={evidence.proprietary_format || 'Standard'}>
+                    {evidence.proprietary_format || 'Standard'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-gray-500 mb-0.5">Channel Index</dt>
+                  <dd className="font-medium text-gray-900">
+                    {evidence.channel_index !== undefined && evidence.channel_index !== null ? `CH-${evidence.channel_index}` : 'Single / Not Specified'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-gray-500 mb-0.5">Browser Playability</dt>
+                  <dd className="font-medium">
+                    {evidence.is_natively_playable ? (
+                      <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                        <CheckCircle size={12} /> Native HTML5
+                      </span>
+                    ) : (
+                      <span className="text-amber-700 font-semibold flex items-center gap-1">
+                        <AlertOctagon size={12} /> Proprietary Advisory
+                      </span>
+                    )}
+                  </dd>
+                </div>
+                {(evidence.start_time_osd || evidence.end_time_osd) && (
+                  <div className="col-span-2 mt-1 pt-2 border-t border-gray-200/80 grid grid-cols-2 gap-2">
+                    <div>
+                      <dt className="text-gray-500 mb-0.5">CCTV Start (OSD)</dt>
+                      <dd className="font-mono text-xs text-indigo-900 font-semibold">
+                        {evidence.start_time_osd ? formatDate(evidence.start_time_osd) : 'N/A'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-gray-500 mb-0.5">CCTV End (OSD)</dt>
+                      <dd className="font-mono text-xs text-indigo-900 font-semibold">
+                        {evidence.end_time_osd ? formatDate(evidence.end_time_osd) : 'N/A'}
+                      </dd>
+                    </div>
+                  </div>
+                )}
+              </dl>
+            </section>
+
             {/* INTEGRITY */}
             <section>
+
               <div className="flex items-center justify-between mb-4 border-b border-gray-100 pb-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Integrity</h3>
                 {canVerify && (
@@ -607,6 +716,19 @@ export function EvidenceInspectionView() {
           }}
         />
       )}
+
+      {/* Binary Hex Header Preview Modal */}
+      {isHexPreviewOpen && (
+        <HexPreviewModal
+          isOpen={isHexPreviewOpen}
+          onClose={() => setIsHexPreviewOpen(false)}
+          caseId={activeCase?.case_identifier || caseId || ''}
+          evidenceId={evidence.id}
+          evidenceIdentifier={evidence.evidence_identifier}
+          filename={evidence.original_filename}
+        />
+      )}
     </div>
   );
 }
+
