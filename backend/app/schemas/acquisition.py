@@ -40,3 +40,18 @@ class AcquisitionResponse(BaseModel):
 class CreateEvidenceFromAcquisitionRequest(BaseModel):
     custom_name: Optional[str] = None
     notes: Optional[str] = None
+
+class NetworkProbeRequest(BaseModel):
+    username: str = "admin"
+    password: str = ""
+    channel: int = 1
+    rtsp_path_override: Optional[str] = None
+
+class NetworkProbeResponse(BaseModel):
+    reachable: bool
+    onvif_supported: bool
+    stream_resolved: bool
+    device_manufacturer: Optional[str] = None
+    device_model: Optional[str] = None
+    clock_offset_seconds: Optional[float] = None
+    error_message: Optional[str] = None

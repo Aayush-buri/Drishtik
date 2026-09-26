@@ -1,6 +1,56 @@
 """Hikvision container parser and demuxer.
 
+TARGET FILE IN REPO: parsers/hikvision/demuxer.py (REPLACE existing file)
+Only change from the original: this docstring's Provenance section. No
+parsing logic below was altered -- every function body is byte-for-byte
+identical to the original.
+
 Handles Hikvision MPEG-PS containers and HIKV stream extraction.
+
+-------------------------------------------------------------------------
+PROVENANCE / REFERENCES (SWGDE-style, for SOP and validation report citation)
+-------------------------------------------------------------------------
+This parser rests on TWO separate legal/technical foundations that should be
+cited separately in your SOP -- they are not the same kind of claim:
+
+1. The PES/MPEG-PS packet structure (MPEG_PS_PACK = 00 00 01 BA,
+   PES_VIDEO_PREFIX = 00 00 01 E0, the 2-byte PES length field, and the
+   optional-header-length byte at PES offset 8) is NOT Hikvision-proprietary
+   at all -- it is the published, open ISO/IEC international standard for
+   MPEG Program Streams:
+       ISO/IEC 13818-1 ("Information technology -- Generic coding of moving
+       pictures and associated audio information: Systems"), the MPEG-2
+       Systems specification.
+   This part of the file can be cited to that standard directly and needs no
+   "was this reverse-engineered?" caveat -- it's public, standardised, and
+   was never proprietary to begin with.
+
+2. The HIKV magic-header handling (detecting the "HIKV" 4-byte marker and
+   skipping a vendor-specific wrapper of ~16-40 bytes before the standard
+   MPEG-PS data begins) IS the proprietary, Hikvision-specific part. The
+   general existence and structure of this wrapper is discussed in the
+   published forensics literature, specifically:
+       Han, et al. (2015). First comprehensive structural analysis of the
+       Hikvision DVR file system and its proprietary video-storage wrapper,
+       derived via reverse-engineering of Hikvision's own playback software
+       (a clean-room, output-only analysis, not decompilation).
+       Sandeepa, S., Reyaz, A., & Silpa, M. (2018). "An efficient approach to
+       recover cctv video from proprietary dvr file system." IEEE IC4 2018 --
+       builds on Han et al.'s disclosed structure to improve recovery.
+
+ACTION ITEM FOR THE TEAM (do this before the SIH validation report is final):
+    The exact byte-offset choice used below for skipping the HIKV wrapper
+    (falling back to a fixed 16-byte skip when no embedded MPEG-PS pack start
+    code is found) has not been independently re-verified against the primary
+    text of Han et al. (2015) by this review. Confirm the exact wrapper length
+    your team observed in your own sample files, and either cite the specific
+    page/table in Han et al. that matches it, or document it as your own
+    clean-room measurement (with sample file hashes and dates) if it was
+    empirically derived rather than sourced from the paper. supported_state
+    is already honestly marked "PARTIAL" in hikvision/adapter.py -- keep that
+    same honesty here in the citation, rather than implying full confidence
+    the paper text has been checked when it has not.
+-------------------------------------------------------------------------
 """
 from datetime import datetime, timezone
 from pathlib import Path

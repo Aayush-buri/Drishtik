@@ -13,10 +13,48 @@ from app.models.device import Device, DeviceStatus
 from app.models.acquisition import Acquisition, AcquisitionStatus, AcquisitionMethod
 from app.models.evidence import Evidence, IntegrityStatus, ProcessingStatus, EvidenceStatus
 from app.models.audit import AuditLog
-from app.forensics.acquisition import get_acquisition_adapter
+from app.forensics.acquisition import (
+    get_acquisition_adapter,
+    get_network_acquisition_adapter,
+    NetworkDeviceTarget,
+    probe_network_device,
+)
 from app.forensics.device_provider import get_device_provider
 from app.forensics.signatures.signature_probe import probe_file
 from app.services.video_processing import extract_video_metadata
+
+
+def probe_device_network_connection(
+    device: Device,
+    username: str,
+    password: str,
+    channel: int = 1,
+    rtsp_path_override: Optional[str] = None
+) -> dict:
+    """Read-only network probe to check ONVIF/RTSP connectivity for an IP DVR/NVR."""
+    ip = device.ip_address
+    if not ip:
+        raise HTTPException(status_code=400, detail="Device does not have an IP address configured.")
+
+    target = NetworkDeviceTarget(
+        device_label=device.device_identifier,
+        ip_address=ip,
+        username=username,
+        password=password,
+        channel=channel,
+        vendor_hint=device.manufacturer,
+        rtsp_path_override=rtsp_path_override,
+    )
+    info = probe_network_device(target)
+    return {
+        "reachable": info.reachable,
+        "onvif_supported": info.onvif_supported,
+        "stream_resolved": bool(info.rtsp_uri),
+        "device_manufacturer": info.device_manufacturer or device.manufacturer,
+        "device_model": info.device_model or device.model,
+        "clock_offset_seconds": info.device_clock_offset.total_seconds() if info.device_clock_offset else None,
+        "error_message": info.error_message,
+    }
 
 
 def get_case_acquisition_dir(case_identifier: str, acquisition_identifier: str) -> Path:
@@ -57,10 +95,157 @@ def execute_acquisition(
     method: AcquisitionMethod,
     source_path_input: str,
     user_id: int,
-    notes: Optional[str] = None
+    notes: Optional[str] = None,
+    network_username: Optional[str] = None,
+    network_password: Optional[str] = None,
+    network_channel: int = 1,
+    network_duration_seconds: int = 300,
+    network_rtsp_path: Optional[str] = None,
 ) -> Acquisition:
     if device.status == DeviceStatus.ARCHIVED:
         raise HTTPException(status_code=400, detail="Cannot perform acquisition on an archived device.")
+
+    is_network = (method == AcquisitionMethod.NETWORK_LIVE_PULL or str(method) == "NETWORK_LIVE_PULL")
+    if is_network:
+        ip = device.ip_address or source_path_input
+        if not ip or ip.strip() == "":
+            raise HTTPException(status_code=400, detail="Device must have a valid IP address configured for network live acquisition.")
+
+        acq_ident = generate_acquisition_identifier(db)
+        destination_dir = get_case_acquisition_dir(case.case_identifier, acq_ident)
+
+        safe_label = "".join(c if c.isalnum() or c in "-_" else "_" for c in device.device_identifier)
+        dest_reference = f"acquisitions/{acq_ident}/{safe_label}_live_capture.ts"
+        source_display = f"network://{ip}:554/ch{network_channel}"
+
+        acquisition = Acquisition(
+            acquisition_identifier=acq_ident,
+            case_id=case.id,
+            device_id=device.id,
+            acquisition_method=method,
+            source_path=source_display,
+            destination_reference=dest_reference,
+            status=AcquisitionStatus.RUNNING,
+            progress=0,
+            operator_id=user_id,
+            notes=notes,
+        )
+        db.add(acquisition)
+        db.commit()
+        db.refresh(acquisition)
+
+        audit_start = AuditLog(
+            case_id=case.id,
+            user_id=user_id,
+            action="ACQUISITION_STARTED",
+            target_identifier=acq_ident,
+            details=json.dumps({
+                "acquisition_identifier": acq_ident,
+                "device_identifier": device.device_identifier,
+                "method": "NETWORK_LIVE_PULL",
+                "source": source_display,
+            }),
+        )
+        db.add(audit_start)
+        db.commit()
+
+        try:
+            target = NetworkDeviceTarget(
+                device_label=device.device_identifier,
+                ip_address=ip,
+                username=network_username or "admin",
+                password=network_password or "",
+                channel=network_channel,
+                vendor_hint=device.manufacturer,
+                rtsp_path_override=network_rtsp_path,
+            )
+            adapter = get_network_acquisition_adapter(target, duration_seconds=network_duration_seconds)
+            result = adapter.acquire(destination_dir)
+
+            if result.verified:
+                acquisition.status = AcquisitionStatus.COMPLETED
+                acquisition.progress = 100
+                acquisition.source_sha256 = result.source_sha256
+                acquisition.destination_sha256 = result.destination_sha256
+                acquisition.source_md5 = result.source_md5
+                acquisition.destination_md5 = result.destination_md5
+                acquisition.size_bytes = result.size_bytes
+                acquisition.destination_reference = str(
+                    result.destination_path.relative_to(Path("data") / "case_data" / case.case_identifier)
+                ).replace("\\", "/")
+                acquisition.completed_at = datetime.now(timezone.utc)
+                acquisition.error_message = None
+
+                clock_offset = adapter.get_device_clock_offset()
+                if clock_offset:
+                    offset_note = f" [ONVIF Clock offset: {clock_offset.total_seconds():.1f}s]"
+                    acquisition.notes = (acquisition.notes or "") + offset_note
+
+                if device.status == DeviceStatus.ACTIVE:
+                    device.status = DeviceStatus.ACQUIRED
+
+                db.commit()
+
+                audit_complete = AuditLog(
+                    case_id=case.id,
+                    user_id=user_id,
+                    action="ACQUISITION_COMPLETED",
+                    target_identifier=acq_ident,
+                    details=json.dumps({
+                        "acquisition_identifier": acq_ident,
+                        "device_identifier": device.device_identifier,
+                        "sha256": result.destination_sha256,
+                        "md5": result.destination_md5,
+                        "size_bytes": result.size_bytes,
+                        "verified": True,
+                        "capture_type": "NETWORK_LIVE_PULL",
+                    }),
+                )
+                db.add(audit_complete)
+                db.commit()
+            else:
+                acquisition.status = AcquisitionStatus.FAILED
+                acquisition.error_message = result.error_message or "Network stream capture verification failed."
+                acquisition.source_sha256 = result.source_sha256
+                acquisition.destination_sha256 = result.destination_sha256
+                acquisition.completed_at = datetime.now(timezone.utc)
+                db.commit()
+
+                audit_fail = AuditLog(
+                    case_id=case.id,
+                    user_id=user_id,
+                    action="ACQUISITION_FAILED",
+                    target_identifier=acq_ident,
+                    details=json.dumps({
+                        "acquisition_identifier": acq_ident,
+                        "device_identifier": device.device_identifier,
+                        "error": acquisition.error_message,
+                    }),
+                )
+                db.add(audit_fail)
+                db.commit()
+        except Exception as e:
+            acquisition.status = AcquisitionStatus.FAILED
+            acquisition.error_message = str(e)
+            acquisition.completed_at = datetime.now(timezone.utc)
+            db.commit()
+
+            audit_fail = AuditLog(
+                case_id=case.id,
+                user_id=user_id,
+                action="ACQUISITION_FAILED",
+                target_identifier=acq_ident,
+                details=json.dumps({
+                    "acquisition_identifier": acq_ident,
+                    "device_identifier": device.device_identifier,
+                    "error": str(e),
+                }),
+            )
+            db.add(audit_fail)
+            db.commit()
+
+        enrich_acquisition_metadata(acquisition, db)
+        return acquisition
 
     provider = get_device_provider()
 
@@ -291,7 +476,7 @@ def create_evidence_from_acquisition(
         "Raw H.264 Elementary Stream", "Raw H.265 Elementary Stream"
     )):
         media_type = 'Video'
-    elif ext in ['.mp4', '.avi', '.mkv', '.dav', '.mov']:
+    elif ext in ['.mp4', '.avi', '.mkv', '.dav', '.mov', '.ts']:
         media_type = 'Video'
     elif ext in ['.jpg', '.jpeg', '.png', '.bmp']:
         media_type = 'Image'

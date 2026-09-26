@@ -69,14 +69,14 @@ class HyperledgerFabricProvider(BlockchainProvider):
                 "message": "Hyperledger Fabric peer endpoint unreachable or disabled. Local SHA-256 integrity and audit logging remain active."
             }
         return {
-            "available": True,
-            "status": "ONLINE",
+            "available": False,
+            "status": "NOT_CONFIGURED",
             "network": "Hyperledger Fabric",
             "peer_endpoint": self.peer_endpoint,
             "channel": self.channel_name,
             "chaincode": self.chaincode_name,
             "msp_id": self.msp_id,
-            "message": "Hyperledger Fabric peer endpoint reachable and operational."
+            "message": "Hyperledger Fabric peer endpoint reachable, but Gateway transaction client is not configured. Ledger transactions are not submitted."
         }
 
     def anchor_evidence(
@@ -92,57 +92,22 @@ class HyperledgerFabricProvider(BlockchainProvider):
     ) -> AnchorResult:
         meta_hash = self._compute_metadata_hash(metadata)
 
-        if not self._probe_peer_connectivity():
-            logger.info(f"Fabric runtime unavailable; returning non-blocking UNAVAILABLE for {evidence_identifier}")
-            return AnchorResult(
-                success=False,
-                transaction_id=None,
-                block_number=None,
-                timestamp=timestamp,
-                status="UNAVAILABLE",
-                channel=self.channel_name,
-                chaincode=self.chaincode_name,
-                metadata_hash=meta_hash,
-                error_message="Blockchain network unreachable. Local SHA-256 integrity preserved."
-            )
-
-        # In an active Fabric environment with installed SDK/Gateway, submit transaction to chaincode
-        try:
-            # Generate deterministic transaction ID envelope from fabric client
-            tx_id = hashlib.sha256(
-                f"{self.channel_name}:{evidence_identifier}:{sha256}:{timestamp.isoformat()}".encode('utf-8')
-            ).hexdigest()
-
-            return AnchorResult(
-                success=True,
-                transaction_id=tx_id,
-                block_number=1,
-                timestamp=timestamp,
-                status="ANCHORED",
-                channel=self.channel_name,
-                chaincode=self.chaincode_name,
-                metadata_hash=meta_hash,
-                payload={
-                    "case": case_identifier,
-                    "evidence": evidence_identifier,
-                    "sha256": sha256,
-                    "event_type": event_type,
-                    "actor": actor
-                }
-            )
-        except Exception as ex:
-            logger.error(f"Failed to anchor evidence to Fabric: {ex}")
-            return AnchorResult(
-                success=False,
-                transaction_id=None,
-                block_number=None,
-                timestamp=timestamp,
-                status="FAILED",
-                channel=self.channel_name,
-                chaincode=self.chaincode_name,
-                metadata_hash=meta_hash,
-                error_message=str(ex)
-            )
+        # Live Fabric SDK/Gateway client transaction submission is not configured on this machine.
+        # Strictly never fabricate transaction IDs, block numbers, or synthetic ANCHORED status.
+        status_code = "UNAVAILABLE"
+        msg = "Hyperledger Fabric Gateway transaction submission is not configured. Local SHA-256 integrity and audit trail preserved."
+        logger.info(f"Fabric provider returning non-blocking {status_code} for evidence {evidence_identifier}")
+        return AnchorResult(
+            success=False,
+            transaction_id=None,
+            block_number=None,
+            timestamp=timestamp,
+            status=status_code,
+            channel=self.channel_name,
+            chaincode=self.chaincode_name,
+            metadata_hash=meta_hash,
+            error_message=msg
+        )
 
     def anchor_custody_event(
         self,
@@ -158,54 +123,21 @@ class HyperledgerFabricProvider(BlockchainProvider):
     ) -> AnchorResult:
         meta_hash = self._compute_metadata_hash(metadata)
 
-        if not self._probe_peer_connectivity():
-            logger.info(f"Fabric runtime unavailable; returning non-blocking UNAVAILABLE for custody event {event_identifier}")
-            return AnchorResult(
-                success=False,
-                transaction_id=None,
-                block_number=None,
-                timestamp=timestamp,
-                status="UNAVAILABLE",
-                channel=self.channel_name,
-                chaincode=self.chaincode_name,
-                metadata_hash=meta_hash,
-                error_message="Blockchain network unreachable. Local SHA-256 integrity preserved."
-            )
-
-        try:
-            tx_id = hashlib.sha256(
-                f"{self.channel_name}:{event_identifier}:{previous_event_reference}:{sha256}".encode('utf-8')
-            ).hexdigest()
-
-            return AnchorResult(
-                success=True,
-                transaction_id=tx_id,
-                block_number=1,
-                timestamp=timestamp,
-                status="ANCHORED",
-                channel=self.channel_name,
-                chaincode=self.chaincode_name,
-                metadata_hash=meta_hash,
-                payload={
-                    "event_identifier": event_identifier,
-                    "previous_reference": previous_event_reference,
-                    "action": action,
-                    "actor": actor,
-                    "sha256": sha256
-                }
-            )
-        except Exception as ex:
-            return AnchorResult(
-                success=False,
-                transaction_id=None,
-                block_number=None,
-                timestamp=timestamp,
-                status="FAILED",
-                channel=self.channel_name,
-                chaincode=self.chaincode_name,
-                metadata_hash=meta_hash,
-                error_message=str(ex)
-            )
+        # Strictly never fabricate transaction IDs, block numbers, or synthetic ANCHORED status.
+        status_code = "UNAVAILABLE"
+        msg = "Hyperledger Fabric Gateway transaction submission is not configured. Local SHA-256 integrity and audit trail preserved."
+        logger.info(f"Fabric provider returning non-blocking {status_code} for custody event {event_identifier}")
+        return AnchorResult(
+            success=False,
+            transaction_id=None,
+            block_number=None,
+            timestamp=timestamp,
+            status=status_code,
+            channel=self.channel_name,
+            chaincode=self.chaincode_name,
+            metadata_hash=meta_hash,
+            error_message=msg
+        )
 
     def verify_anchor(
         self,
@@ -213,39 +145,20 @@ class HyperledgerFabricProvider(BlockchainProvider):
         evidence_identifier: str,
         expected_sha256: str
     ) -> VerificationResult:
-        if not self._probe_peer_connectivity():
-            return VerificationResult(
-                verified=False,
-                status="UNAVAILABLE",
-                current_sha256=expected_sha256,
-                recorded_sha256=expected_sha256,
-                anchored_sha256=None,
-                transaction_id=None,
-                block_number=None,
-                timestamp=None,
-                reason="Blockchain service unavailable. Unable to query Hyperledger Fabric ledger."
-            )
-
-        # Real chaincode query would return the anchored record from ledger
+        # Strictly never return synthetic VERIFIED ledger results or fake transaction IDs.
+        status_code = "UNAVAILABLE"
         return VerificationResult(
-            verified=True,
-            status="VERIFIED",
+            verified=False,
+            status=status_code,
             current_sha256=expected_sha256,
             recorded_sha256=expected_sha256,
-            anchored_sha256=expected_sha256,
-            transaction_id="TX-FABRIC-VERIFIED",
-            block_number=1,
-            timestamp=datetime.now(timezone.utc),
-            reason="Current file SHA-256 matches both Drishtik recorded hash and Hyperledger Fabric anchored state."
+            anchored_sha256=None,
+            transaction_id=None,
+            block_number=None,
+            timestamp=None,
+            reason="Hyperledger Fabric ledger query is not configured. Unable to query ledger. Local SHA-256 integrity verified."
         )
 
     def get_transaction(self, transaction_id: str) -> Optional[Dict[str, Any]]:
-        if not self._probe_peer_connectivity():
-            return None
-        return {
-            "transaction_id": transaction_id,
-            "channel": self.channel_name,
-            "chaincode": self.chaincode_name,
-            "status": "COMMITTED",
-            "validation_code": 0
-        }
+        # Strictly never synthesize fake COMMITTED transactions.
+        return None

@@ -16,11 +16,12 @@ import {
   File as FileIcon,
   CornerLeftUp,
   RefreshCw,
-  AlertTriangle
+  AlertTriangle,
+  Wifi
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { deviceService } from '../../../services/deviceService';
-import type { Device, AcquisitionMethod, Acquisition, DeviceBrowseItem } from '../../../services/deviceService';
+import type { Device, AcquisitionMethod, Acquisition, DeviceBrowseItem, NetworkProbeResponse } from '../../../services/deviceService';
 import { useAuth } from '../../../hooks/useAuth';
 
 interface StartAcquisitionModalProps {
@@ -43,8 +44,11 @@ export const StartAcquisitionModal: React.FC<StartAcquisitionModalProps> = ({
   const navigate = useNavigate();
 
   const isConnected = !!device.is_connected;
-  const [sourceMode, setSourceMode] = useState<'device' | 'upload'>(isConnected ? 'device' : 'upload');
-  const [method, setMethod] = useState<AcquisitionMethod>('FILE_COPY');
+  const hasIp = !!device.ip_address;
+  const [sourceMode, setSourceMode] = useState<'device' | 'upload' | 'network'>(
+    isConnected ? 'device' : (hasIp ? 'network' : 'upload')
+  );
+  const [method, setMethod] = useState<AcquisitionMethod>(hasIp && !isConnected ? 'NETWORK_LIVE_PULL' : 'FILE_COPY');
 
   // Constrained device browsing state
   const [currentSubpath, setCurrentSubpath] = useState('');
@@ -56,6 +60,16 @@ export const StartAcquisitionModal: React.FC<StartAcquisitionModalProps> = ({
   // File upload state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [notes, setNotes] = useState('');
+
+  // Network acquisition state
+  const [networkUsername, setNetworkUsername] = useState('admin');
+  const [networkPassword, setNetworkPassword] = useState('');
+  const [networkChannel, setNetworkChannel] = useState(1);
+  const [networkDuration, setNetworkDuration] = useState(30);
+  const [networkRtspPath, setNetworkRtspPath] = useState('');
+  const [probeLoading, setProbeLoading] = useState(false);
+  const [probeResult, setProbeResult] = useState<NetworkProbeResponse | null>(null);
+  const [probeError, setProbeError] = useState<string | null>(null);
 
   // Execution state
   const [isRunning, setIsRunning] = useState(false);
@@ -119,6 +133,33 @@ export const StartAcquisitionModal: React.FC<StartAcquisitionModalProps> = ({
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   };
 
+  const handleProbeNetwork = async () => {
+    if (!device.ip_address) {
+      setProbeError('Device IP address is required to probe network stream.');
+      return;
+    }
+    setProbeLoading(true);
+    setProbeError(null);
+    setProbeResult(null);
+    try {
+      const res = await deviceService.probeNetworkDevice(effectiveCaseId, device.device_identifier, {
+        ip_address: device.ip_address,
+        username: networkUsername || undefined,
+        password: networkPassword || undefined,
+        manufacturer: device.manufacturer,
+        custom_rtsp_path: networkRtspPath.trim() || undefined
+      });
+      setProbeResult(res);
+      if (!res.reachable) {
+        setProbeError(res.error || 'Network device unreachable.');
+      }
+    } catch (err: any) {
+      setProbeError(err.message || 'Probe request failed');
+    } finally {
+      setProbeLoading(false);
+    }
+  };
+
   const handleStart = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -133,9 +174,20 @@ export const StartAcquisitionModal: React.FC<StartAcquisitionModalProps> = ({
         setError('Please click to select a file from the device to acquire.');
         return;
       }
-    } else if (sourceMode === 'upload' && !selectedFile) {
-      setError('Please select a forensic source file or image to acquire.');
-      return;
+    } else if (sourceMode === 'upload') {
+      if (!selectedFile) {
+        setError('Please select a forensic source file or image to acquire.');
+        return;
+      }
+    } else if (sourceMode === 'network') {
+      if (!device.ip_address) {
+        setError('Device does not have an IP address configured. Cannot acquire network stream.');
+        return;
+      }
+      if (networkDuration < 1 || networkDuration > 3600) {
+        setError('Stream acquisition duration must be between 1 and 3600 seconds.');
+        return;
+      }
     }
 
     setIsRunning(true);
@@ -146,10 +198,15 @@ export const StartAcquisitionModal: React.FC<StartAcquisitionModalProps> = ({
         effectiveCaseId,
         device.device_identifier,
         {
-          method,
+          method: sourceMode === 'network' ? 'NETWORK_LIVE_PULL' : method,
           source_path: sourceMode === 'device' ? (selectedSourcePath || currentSubpath || '') : undefined,
           notes: notes.trim() || undefined,
-          file: sourceMode === 'upload' ? selectedFile || undefined : undefined
+          file: sourceMode === 'upload' ? selectedFile || undefined : undefined,
+          network_username: sourceMode === 'network' ? (networkUsername || undefined) : undefined,
+          network_password: sourceMode === 'network' ? (networkPassword || undefined) : undefined,
+          network_channel: sourceMode === 'network' ? networkChannel : undefined,
+          network_duration_seconds: sourceMode === 'network' ? networkDuration : undefined,
+          network_rtsp_path: sourceMode === 'network' ? (networkRtspPath.trim() || undefined) : undefined,
         },
         (pct) => setProgress(pct)
       );
@@ -415,6 +472,7 @@ export const StartAcquisitionModal: React.FC<StartAcquisitionModalProps> = ({
                   <option value="EXPORTED_VIDEO">Exported DVR/NVR Video Copy</option>
                   <option value="DISK_IMAGE">Forensic Disk Image (.raw, .dd, .img, .bin, .e01)</option>
                   <option value="DIRECTORY_COPY">Directory Copy (Recursive Folder & Hash Manifest)</option>
+                  <option value="NETWORK_LIVE_PULL">Network Live Stream (ONVIF / RTSP Stream Copy)</option>
                   <option value="LOGICAL_ACQUISITION">Logical Acquisition</option>
                   <option value="OTHER">Other Acquisition Method</option>
                 </select>
@@ -425,27 +483,46 @@ export const StartAcquisitionModal: React.FC<StartAcquisitionModalProps> = ({
                 <label className="block text-xs font-semibold text-gray-700 mb-1">
                   Source Selection Mode
                 </label>
-                <div className="flex border border-gray-200 rounded-lg p-1 bg-gray-50 mb-3">
+                <div className="flex border border-gray-200 rounded-lg p-1 bg-gray-50 mb-3 gap-1">
                   <button
                     type="button"
-                    onClick={() => setSourceMode('device')}
+                    onClick={() => {
+                      setSourceMode('device');
+                      if (method === 'NETWORK_LIVE_PULL') setMethod('FILE_COPY');
+                    }}
                     disabled={!isConnected}
-                    className={`flex-1 py-1.5 text-xs font-medium rounded-md flex items-center justify-center gap-1.5 transition-colors ${
+                    className={`flex-1 py-1.5 px-2 text-xs font-medium rounded-md flex items-center justify-center gap-1.5 transition-colors ${
                       sourceMode === 'device' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
                     } disabled:opacity-50`}
                   >
                     <FolderOpen size={14} />
-                    <span>Browse Connected Device ({device.source_root || 'Not Available'})</span>
+                    <span className="truncate">Connected Device</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSourceMode('upload')}
-                    className={`flex-1 py-1.5 text-xs font-medium rounded-md flex items-center justify-center gap-1.5 transition-colors ${
+                    onClick={() => {
+                      setSourceMode('upload');
+                      if (method === 'NETWORK_LIVE_PULL') setMethod('FILE_COPY');
+                    }}
+                    className={`flex-1 py-1.5 px-2 text-xs font-medium rounded-md flex items-center justify-center gap-1.5 transition-colors ${
                       sourceMode === 'upload' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
                     }`}
                   >
                     <UploadCloud size={14} />
-                    <span>Staging Upload</span>
+                    <span className="truncate">Staging Upload</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSourceMode('network');
+                      setMethod('NETWORK_LIVE_PULL');
+                    }}
+                    className={`flex-1 py-1.5 px-2 text-xs font-medium rounded-md flex items-center justify-center gap-1.5 transition-colors ${
+                      sourceMode === 'network' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    <Wifi size={14} />
+                    <span className="truncate">Live Stream (IP/RTSP)</span>
                   </button>
                 </div>
 
@@ -539,7 +616,7 @@ export const StartAcquisitionModal: React.FC<StartAcquisitionModalProps> = ({
                       )}
                     </div>
                   </div>
-                ) : (
+                ) : sourceMode === 'upload' ? (
                   /* STAGING UPLOAD */
                   <div className="border-2 border-dashed border-gray-300 rounded-xl p-5 text-center hover:border-indigo-400 transition-colors bg-gray-50/50">
                     <input
@@ -562,6 +639,136 @@ export const StartAcquisitionModal: React.FC<StartAcquisitionModalProps> = ({
                         </div>
                       )}
                     </label>
+                  </div>
+                ) : (
+                  /* NETWORK LIVE STREAM PULL */
+                  <div className="border border-gray-200 rounded-xl p-4 bg-white space-y-3">
+                    <div className="flex items-center justify-between text-xs pb-2 border-b border-gray-100">
+                      <div className="flex items-center gap-2">
+                        <Wifi size={14} className="text-indigo-600" />
+                        <span className="font-semibold text-gray-800">Target IP:</span>
+                        <span className="font-mono text-gray-700 bg-gray-50 px-2 py-0.5 rounded border border-gray-200">
+                          {device.ip_address || 'No IP address configured'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleProbeNetwork}
+                        disabled={probeLoading || !device.ip_address}
+                        className="px-2.5 py-1 text-xs font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+                      >
+                        <RefreshCw size={12} className={probeLoading ? 'animate-spin' : ''} />
+                        <span>{probeLoading ? 'Probing...' : 'Test Connection / Probe'}</span>
+                      </button>
+                    </div>
+
+                    {probeError && (
+                      <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
+                        <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                        <span>{probeError}</span>
+                      </div>
+                    )}
+
+                    {probeResult && (
+                      <div className={`p-2.5 rounded-lg text-xs space-y-1 ${
+                        probeResult.reachable ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-red-50 border border-red-200 text-red-700'
+                      }`}>
+                        <div className="flex items-center gap-1.5 font-bold">
+                          {probeResult.reachable ? (
+                            <>
+                              <CheckCircle2 size={14} className="text-emerald-600" />
+                              <span>Stream Accessible</span>
+                              <span className="font-normal text-gray-500">
+                                (ONVIF: {probeResult.onvif_supported ? 'Yes' : 'No'}, RTSP: {probeResult.rtsp_supported ? 'Yes' : 'No'})
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <AlertCircle size={14} className="text-red-600" />
+                              <span>Device Unreachable</span>
+                            </>
+                          )}
+                        </div>
+                        {probeResult.resolved_stream_uri && (
+                          <div className="font-mono text-[11px] text-gray-700 break-all bg-white p-1.5 rounded border border-emerald-100">
+                            {probeResult.resolved_stream_uri}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                          Channel
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={128}
+                          value={networkChannel}
+                          onChange={(e) => setNetworkChannel(parseInt(e.target.value) || 1)}
+                          className="w-full text-xs px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                          Capture Duration (seconds)
+                        </label>
+                        <input
+                          type="number"
+                          min={5}
+                          max={3600}
+                          value={networkDuration}
+                          onChange={(e) => setNetworkDuration(parseInt(e.target.value) || 30)}
+                          className="w-full text-xs px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                          Username
+                        </label>
+                        <input
+                          type="text"
+                          value={networkUsername}
+                          onChange={(e) => setNetworkUsername(e.target.value)}
+                          placeholder="admin"
+                          className="w-full text-xs px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                          Password
+                        </label>
+                        <input
+                          type="password"
+                          value={networkPassword}
+                          onChange={(e) => setNetworkPassword(e.target.value)}
+                          placeholder="Runtime password (never stored)"
+                          className="w-full text-xs px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                        Custom RTSP Path (Optional Override)
+                      </label>
+                      <input
+                        type="text"
+                        value={networkRtspPath}
+                        onChange={(e) => setNetworkRtspPath(e.target.value)}
+                        placeholder="e.g. /cam/realmonitor?channel=1&subtype=0 or /Streaming/Channels/101"
+                        className="w-full text-xs px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-[11px]"
+                      />
+                    </div>
+
+                    <p className="text-[11px] text-gray-500 italic">
+                      Non-transcoding RTSP acquisition that preserves the original encoded media packets without re-encoding. Passwords are held in runtime memory only.
+                    </p>
                   </div>
                 )}
               </div>
@@ -607,7 +814,7 @@ export const StartAcquisitionModal: React.FC<StartAcquisitionModalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={sourceMode === 'device' && !isConnected}
+                  disabled={(sourceMode === 'device' && !isConnected) || (sourceMode === 'network' && !device.ip_address)}
                   className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-sm flex items-center gap-2 transition-colors disabled:opacity-50"
                 >
                   <ShieldCheck size={15} />

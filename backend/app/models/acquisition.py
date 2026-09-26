@@ -10,6 +10,7 @@ class AcquisitionMethod(str, enum.Enum):
     DISK_IMAGE = "DISK_IMAGE"
     EXPORTED_VIDEO = "EXPORTED_VIDEO"
     LOGICAL_ACQUISITION = "LOGICAL_ACQUISITION"
+    NETWORK_LIVE_PULL = "NETWORK_LIVE_PULL"
     OTHER = "OTHER"
 
 class AcquisitionStatus(str, enum.Enum):

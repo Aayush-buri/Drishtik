@@ -1,6 +1,6 @@
 # Drishtik: Multi-Vendor DVR/NVR Forensic Analysis Platform
 
-[![Project Status: Phase 1 - Repository Foundation](https://img.shields.io/badge/Status-Phase%201%3A%20Repository%20Foundation-blue)](#project-status)
+[![Project Status: Step 15 - Complete](https://img.shields.io/badge/Status-Step%2015%3A%20Complete-green)](#current-status)
 [![License: Proprietary / Authorized Forensic Use](https://img.shields.io/badge/License-Authorized%20Forensic%20Use%20Only-red)](#authorized-use-disclaimer)
 [![Integrity: SHA-256 Primary](https://img.shields.io/badge/Integrity-SHA--256%20Primary-green)](#forensic-integrity-standards)
 
@@ -28,9 +28,18 @@ Surveillance video evidence recovery is fraught with technical hurdles that chal
 
 ## Current Status
 
-**Phase 1: Repository Foundation**
+**Step 15: End-to-End Forensic Engine & Reporting Layer (COMPLETE)**
 
-The repository is currently in its initial scaffolding and architectural planning phase. Core project structures, forensic governance rules, security baseline guidelines, and preliminary system architectures are established. No active forensic algorithms, parsers, or video decoding routines have been implemented at this stage.
+The platform is fully implemented through Steps 1 to 15. All core forensic capabilities are functional and covered by comprehensive automated tests:
+- **Evidence Vault & Lineage (Step 8)**: Read-only vault, primary SHA-256 and secondary MD5 hashing, lossless trim/crop derived evidence generation, and administrative soft-deletion.
+- **Physical & Live Network Acquisition (Step 9)**: Constrained workstation mount point browsing, physical drive bitstream capture, staging file upload, and live network stream pull (`NETWORK_LIVE_PULL`) via ONVIF probe + RTSP FFmpeg stream-copy (`-c copy`) into MPEG-TS.
+- **Binary Signature & Vendor Adapters (Step 10)**: Magic-byte probing across Dahua DHAV, Hikvision HIKV/PS, MP4, MKV, AVI, and elementary streams; SWGDE-compliant provenance documentation (`docs/vendors/FORMAT_PROVENANCE.md`).
+- **Synchronized Video Timeline (Step 11)**: Multi-camera alignment, interactive timeline events, and sub-second drift calibration.
+- **Deep Video Analysis (Step 12)**: Frame-by-frame navigation, millisecond OSD timestamping, timeline notes, and single-frame derived evidence export.
+- **Carving & Recovery (Step 13)**: Unallocated cluster and corrupted bitstream signature carving for Dahua, Hikvision, and MP4 structures.
+- **Local AI Analysis (Step 14)**: Air-gapped YOLO object detection and OpenCV background-subtraction motion detection with derived finding export.
+- **Blockchain Chain of Custody (Step 14 Custody)**: Hyperledger Fabric evidence anchoring architecture with real/mock provider isolation and honest offline reporting.
+- **Forensic Reporting (Step 15)**: Court-admissible report generation (ReportLab PDF, HTML, JSON) with cryptographic report hash verification.
 
 ---
 
@@ -115,20 +124,28 @@ graph TD
 
 ---
 
-## Planned Development Phases
+## Development Milestones & Implementation Status
 
-1. **Phase 1: Repository Foundation** *(Current)*
-   - Directory structure, development rules, security boundaries, and architectural baselines.
-2. **Phase 2: Ingestion & Modular Parsers**
-   - Device detection, forensic image ingestion, initial Dahua/Hikvision/CP Plus filesystem parsers.
-3. **Phase 3: Video Engine & Chronological Timeline**
-   - Stream decoding, multi-channel timestamp normalization, synchronized playback workspace.
-4. **Phase 4: Carving, Recovery & AI Detection**
-   - Unallocated sector carving, deleted segment reconstruction, local YOLO-based object detection.
-5. **Phase 5: Blockchain Custody & RBAC Security**
-   - Hyperledger Fabric custody ledger integration, case-level collaborator access control (Admin, Investigator, Viewer).
-6. **Phase 6: Forensic Reporting & Verification**
-   - Comprehensive court-admissible PDF generation, end-to-end integration tests, and security audits.
+1. **Step 1–7: Case Management & RBAC Security** *(Complete)*
+   - Directory structure, development rules, JWT security boundaries, role-based access control (Admin, Investigator, Viewer), and collaborative case workspace.
+2. **Step 8: Forensic Evidence Vault & Cryptographic Verification** *(Complete)*
+   - Read-only storage vault, primary SHA-256 and secondary MD5 hashing, lossless trim/crop derived evidence generation, and administrative soft-delete.
+3. **Step 9: Device Acquisition & Network Ingestion** *(Complete)*
+   - Physical drive mount browsing, staging file upload, and live network stream pull (`NETWORK_LIVE_PULL`) via ONVIF probe + RTSP FFmpeg stream-copy into MPEG-TS.
+4. **Step 10: Binary Signature Engine & Multi-Vendor Adapters** *(Complete)*
+   - Magic-byte container probe engine, Dahua DHAV, Hikvision HIKV/PS, CP Plus adapters, and SWGDE format provenance documentation (`docs/vendors/FORMAT_PROVENANCE.md`).
+5. **Step 11: Multi-Camera Timeline & Drift Calibration** *(Complete)*
+   - Synchronized chronological multi-angle event reconstruction, timeline markers, and sub-second drift compensation.
+6. **Step 12: Video Forensic Analysis & Frame-by-Frame Metrics** *(Complete)*
+   - Frame-by-frame navigation, millisecond OSD timestamping, timeline notes, and single-frame derived evidence export.
+7. **Step 13: Unallocated Space Carving & Recovery** *(Complete)*
+   - Corrupted bitstream scanning, structure validation, and raw stream recovery for Dahua, Hikvision, and MP4 containers.
+8. **Step 14: Local AI Object & Motion Detection** *(Complete)*
+   - Air-gapped YOLO object detection and OpenCV background-subtraction motion detection with derived finding export.
+9. **Step 14 Custody: Blockchain Chain of Custody & Audit Anchoring** *(Complete)*
+   - Hyperledger Fabric evidence anchoring architecture, real/mock provider isolation, and honest offline reporting.
+10. **Step 15: Court-Admissible Forensic Reporting & Export** *(Complete)*
+    - Comprehensive PDF (ReportLab), HTML, and JSON report generation with dual cryptographic hash verification.
 
 ---
 

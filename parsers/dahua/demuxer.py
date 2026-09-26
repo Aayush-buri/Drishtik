@@ -1,7 +1,54 @@
 """Dahua DHAV container parser and demuxer.
 
+TARGET FILE IN REPO: parsers/dahua/demuxer.py (REPLACE existing file)
+Only change from the original: this docstring's Provenance section, and the
+comment attached to decode_dahua_timestamp(). No parsing logic below was
+altered -- every function body is byte-for-byte identical to the original.
+
 Parses proprietary Dahua DAV containers, decodes 32-bit packed OSD timestamps,
 extracts camera channel numbers, and demuxes raw H.264/H.265 elementary bitstreams.
+
+-------------------------------------------------------------------------
+PROVENANCE / REFERENCES (SWGDE-style, for SOP and validation report citation)
+-------------------------------------------------------------------------
+Legal method used: byte-level clean-room container analysis (observing the
+raw file structure of exported/imaged .dav files), NOT decompilation of any
+Dahua-supplied executable or SDK binary.
+
+The general DHAV frame-header approach implemented here -- magic-marker
+scanning ("DHAV"/"dhav"), a fixed-offset header containing frame type,
+channel index, sequence number, payload size, and a packed timestamp field --
+is consistent with the DVR/NVR forensics literature's public documentation of
+Dahua's format, specifically:
+
+  - Yang, F., Li, R., & Wu, C. (2015). "Basic principle and application of
+    video recovery software for 'dahua' and 'hikvision' brand." SHS Web of
+    Conferences.
+  - A 2025 study documenting Dahua's DHFS4.1 (Dahua File System v4.1) frame
+    encapsulation structure and reporting a 91.8% recovery rate / 96.7%
+    temporal accuracy across 27 test drives: "Automated Forensic Recovery
+    Methodology for Video Evidence from Hikvision and Dahua DVR/NVR Systems,"
+    Information, 16(11), p.983 (2025).
+  - Dragonas, E. et al. (2024). "IoT forensics: Exploiting log records from
+    the DAHUA technology CCTV systems." Journal of Forensic Sciences (Wiley)
+    -- log-record analysis, cited here for Dahua-format background rather
+    than the frame-header structure specifically.
+
+ACTION ITEM FOR THE TEAM (do this before the SIH validation report is final):
+    The bit-packed timestamp layout below (6/4/5/5/6/6-bit year/month/day/
+    hour/minute/second fields) has not been independently re-verified by this
+    review against the primary text of the sources above, and the original
+    author of this file did not record which specific source (if any) it was
+    transcribed from. Before citing a specific "[Author, Year]" reference for
+    this exact bit layout in your SOP, either (a) locate the precise passage
+    in one of the papers above that states this layout and cite it directly,
+    or (b) if this was independently reverse-engineered from sample files
+    rather than sourced from these papers, document it as original clean-room
+    work with the test files/dates used, per SWGDE 18-V-001's validation
+    methodology. Do not cite a source you have not personally confirmed
+    states this exact structure -- an unverifiable citation is worse for
+    admissibility than an honestly-labelled "independently derived" note.
+-------------------------------------------------------------------------
 """
 import struct
 from datetime import datetime, timezone
@@ -14,7 +61,7 @@ from parsers.common.demuxer import BaseDemuxer, DemuxedPacket, DemuxSummary, Pac
 def decode_dahua_timestamp(raw_val: int) -> Optional[datetime]:
     """Decode Dahua 32-bit packed OSD timestamp bitfield.
 
-    Bit layout:
+    Bit layout (see module-level Provenance section above for citation status):
     - bits 26..31 (6 bits): Year offset from 2000 (0..63 -> 2000..2063)
     - bits 22..25 (4 bits): Month (1..12)
     - bits 17..21 (5 bits): Day (1..31)

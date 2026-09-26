@@ -8,7 +8,12 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.case import CaseMember
 from app.models.acquisition import Acquisition, AcquisitionMethod
-from app.schemas.acquisition import AcquisitionResponse, CreateEvidenceFromAcquisitionRequest
+from app.schemas.acquisition import (
+    AcquisitionResponse,
+    CreateEvidenceFromAcquisitionRequest,
+    NetworkProbeRequest,
+    NetworkProbeResponse,
+)
 from app.schemas.evidence import EvidenceResponse
 from app.dependencies.auth import require_case_member, require_case_investigator_or_admin
 from app.services import device_service, acquisition_service
@@ -24,6 +29,11 @@ async def start_acquisition_endpoint(
     source_path: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
+    network_username: Optional[str] = Form(None),
+    network_password: Optional[str] = Form(None),
+    network_channel: Optional[int] = Form(1),
+    network_duration_seconds: Optional[int] = Form(300),
+    network_rtsp_path: Optional[str] = Form(None),
     member: CaseMember = Depends(require_case_investigator_or_admin),
     db: Session = Depends(get_db)
 ):
@@ -31,9 +41,14 @@ async def start_acquisition_endpoint(
     if not device:
         raise HTTPException(status_code=404, detail=f"Device {device_identifier} not found in this case.")
 
+    is_network = (method == AcquisitionMethod.NETWORK_LIVE_PULL or str(method) == "NETWORK_LIVE_PULL")
+
     # Determine source path
-    staging_file_to_clean = None
-    if file and file.filename:
+    if is_network:
+        actual_source_path = source_path or device.ip_address or ""
+        if not actual_source_path:
+            raise HTTPException(status_code=400, detail="Device must have an IP address configured for network acquisition.")
+    elif file and file.filename:
         # Save uploaded file to safe acquisition staging buffer
         staging_dir = Path("data") / "case_data" / member.case.case_identifier / "staging"
         staging_dir.mkdir(parents=True, exist_ok=True)
@@ -56,13 +71,39 @@ async def start_acquisition_endpoint(
             method=method,
             source_path_input=actual_source_path,
             user_id=member.user_id,
-            notes=notes
+            notes=notes,
+            network_username=network_username,
+            network_password=network_password,
+            network_channel=network_channel or 1,
+            network_duration_seconds=network_duration_seconds or 300,
+            network_rtsp_path=network_rtsp_path,
         )
         return AcquisitionResponse.model_validate(acq)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Acquisition execution failed: {str(e)}")
+
+@router.post("/{case_identifier}/devices/{device_identifier}/probe-network", response_model=NetworkProbeResponse)
+def probe_device_network_endpoint(
+    case_identifier: str,
+    device_identifier: str,
+    payload: NetworkProbeRequest,
+    member: CaseMember = Depends(require_case_investigator_or_admin),
+    db: Session = Depends(get_db)
+):
+    device = device_service.get_device_by_identifier(db, member.case.id, device_identifier)
+    if not device:
+        raise HTTPException(status_code=404, detail=f"Device {device_identifier} not found in this case.")
+
+    info = acquisition_service.probe_device_network_connection(
+        device=device,
+        username=payload.username,
+        password=payload.password,
+        channel=payload.channel,
+        rtsp_path_override=payload.rtsp_path_override,
+    )
+    return NetworkProbeResponse(**info)
 
 @router.get("/{case_identifier}/devices/{device_identifier}/acquisitions", response_model=List[AcquisitionResponse])
 def list_device_acquisitions_endpoint(
