@@ -642,3 +642,81 @@ def test_24_ai_job_state_transitions(tmp_path, db_session: Session, case_with_me
     # Test cancellation
     cancelled_job = cancel_job(db_session, case_with_members, job.id, user_id=test_admin_user.id)
     assert cancelled_job.status == AIJobStatus.CANCELLED
+
+
+def test_25_ai_timestamp_calibration_normalization(tmp_path, db_session: Session, case_with_members: Case, test_admin_user: User):
+    """Test 25: AI finding timestamps use normalize_timestamp() with drift + offset."""
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock, patch
+    from app.models.video_analysis import TimestampCalibration, TimelineEvent
+    from app.services.ai_service import start_ai_analysis_job
+    
+    ev = create_dummy_mp4_evidence(db_session, case_with_members, test_admin_user, tmp_path)
+    ev.start_time_osd = datetime(2026, 9, 26, 10, 10, 0, tzinfo=timezone.utc)
+    ev.fps = 1.0
+    db_session.commit()
+
+    # Create Calibration
+    calib = TimestampCalibration(
+        case_id=case_with_members.id,
+        evidence_id=ev.id,
+        offset_seconds=5.0,
+        drift_scale=1.001,
+        reference_timestamp=datetime(2026, 9, 26, 10, 0, 0, tzinfo=timezone.utc),
+        time_zone="UTC",
+        calibrated_by=test_admin_user.id
+    )
+    db_session.add(calib)
+    db_session.commit()
+
+    import numpy as np
+    
+    with patch("cv2.VideoCapture") as mock_vc, \
+         patch("app.services.ai_service.get_yolo_model") as mock_yolo_fn:
+        
+        # Mock OpenCV to yield exactly one frame
+        mock_cap = MagicMock()
+        mock_cap.isOpened.side_effect = [True, True, False]
+        mock_cap.read.side_effect = [(True, np.zeros((100, 100, 3), dtype=np.uint8)), (False, None)]
+        mock_cap.get.side_effect = lambda prop: 1.0 if prop == 5 else (1.0 if prop == 7 else 0)
+        mock_vc.return_value = mock_cap
+        
+        # Mock YOLO model to yield exactly one detection
+        mock_yolo_model = MagicMock()
+        mock_yolo_model.names = {0: "person"}
+        mock_box = MagicMock()
+        mock_box.cls = np.array([0])
+        mock_box.conf = np.array([0.9])
+        mock_box.xyxy = np.array([[10.0, 10.0, 50.0, 90.0]])
+        
+        mock_result = MagicMock()
+        mock_result.boxes = [mock_box]
+        mock_yolo_model.predict.return_value = [mock_result]
+        mock_yolo_fn.return_value = mock_yolo_model
+
+        job, findings = start_ai_analysis_job(
+            db=db_session,
+            case=case_with_members,
+            evidence=ev,
+            user_id=test_admin_user.id,
+            detect_objects=True,
+            detect_motion=False,
+            sample_rate_fps=1.0
+        )
+        
+    # Validation
+    assert len(findings) == 1
+    f = findings[0]
+    
+    # media_time = 0.0 (first frame)
+    # src_ts = 10:10:00
+    # normalized = 10:10:05.600000
+    assert f.media_time == 0.0
+    assert f.source_timestamp.replace(tzinfo=None) == datetime(2026, 9, 26, 10, 10, 0)
+    # Using timestamp exactly matched with formula: 10:10:05.6
+    assert f.normalized_timestamp.replace(tzinfo=None) == datetime(2026, 9, 26, 10, 10, 5, 600000)
+
+    # Timeline event created by AI must also have it
+    evt = db_session.query(TimelineEvent).filter(TimelineEvent.evidence_id == ev.id).first()
+    assert evt is not None
+    assert evt.normalized_timestamp.replace(tzinfo=None) == datetime(2026, 9, 26, 10, 10, 5, 600000)

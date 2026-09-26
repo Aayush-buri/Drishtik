@@ -2,6 +2,7 @@
 timestamp calibration, and frame export.
 """
 from datetime import datetime
+import math
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, ConfigDict, model_validator
 from app.models.video_analysis import TimelineEventType
@@ -66,6 +67,8 @@ class TimestampCalibrationCreate(BaseModel):
 
     @model_validator(mode='after')
     def validate_drift_and_reference(self):
+        if not math.isfinite(self.drift_scale):
+            raise ValueError("drift_scale must be finite")
         if self.drift_scale <= 0:
             raise ValueError("drift_scale must be greater than zero")
         if self.drift_scale != 1.0 and self.reference_timestamp is None:

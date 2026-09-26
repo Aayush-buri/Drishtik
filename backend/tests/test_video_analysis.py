@@ -359,7 +359,8 @@ def test_timestamp_calibration_normalization(override_get_db, case_with_members:
 
 
 def test_multi_camera_tracks_discovery(override_get_db, case_with_members: Case, test_admin_user: User, db_session: Session):
-    """Test 13: Multi-camera synchronized tracks discovery."""
+    """Test 13: Multi-camera synchronized tracks discovery with normalizations."""
+    from datetime import datetime, timezone
     client = TestClient(app)
     setup_auth(client, db_session, case_with_members, test_admin_user)
 
@@ -378,13 +379,39 @@ def test_multi_camera_tracks_discovery(override_get_db, case_with_members: Case,
     ev1_id = r1.json()["id"]
     ev2_id = r2.json()["id"]
 
+    ev1 = db_session.query(Evidence).filter(Evidence.id == ev1_id).first()
+    ev1.start_time_osd = datetime(2026, 9, 26, 10, 0, 0, tzinfo=timezone.utc)
+    ev2 = db_session.query(Evidence).filter(Evidence.id == ev2_id).first()
+    ev2.start_time_osd = datetime(2026, 9, 26, 10, 5, 0, tzinfo=timezone.utc)
+    db_session.commit()
+
+    # Calibrate Camera 1: offset 10s
+    client.post(f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev1_id}/calibration", json={"offset_seconds": 10.0})
+    
+    # Calibrate Camera 2: offset 5s, drift 1.001, ref 10:00:00
+    client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev2_id}/calibration",
+        json={"offset_seconds": 5.0, "drift_scale": 1.001, "reference_timestamp": "2026-09-26T10:00:00Z"}
+    )
+
     tracks_resp = client.get(f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev1_id}/multi-camera-tracks")
     assert tracks_resp.status_code == 200
     tracks = tracks_resp.json()
     assert len(tracks) >= 2
-    track_ids = [t["evidence_id"] for t in tracks]
-    assert ev1_id in track_ids
-    assert ev2_id in track_ids
+    
+    t1 = next(t for t in tracks if t["evidence_id"] == ev1_id)
+    t2 = next(t for t in tracks if t["evidence_id"] == ev2_id)
+    
+    # Verify raw source_start_time values remain unchanged
+    assert t1["source_start_time"] == "2026-09-26T10:00:00"
+    assert t2["source_start_time"] == "2026-09-26T10:05:00"
+
+    # Normalized 1: 10:00:10
+    # Normalized 2: 10:05:00 is 300s from ref. 300 * 1.001 = 300.3 + 5s offset = 305.3.
+    # Ref(10:00:00) + 305.3s = 10:05:05.300
+    # offset_from_master = Normalized 2 - Normalized 1 = 10:05:05.3 - 10:00:10.0 = 295.3 seconds
+    assert t1["offset_from_master_seconds"] == 0.0
+    assert abs(t2["offset_from_master_seconds"] - 295.3) < 0.01
 
 
 def test_video_analysis_session_persistence(override_get_db, case_with_members: Case, test_investigator_user: User, db_session: Session):
@@ -478,8 +505,105 @@ def test_drift_and_offset_model(override_get_db, case_with_members: Case, test_a
     assert note["normalized_timestamp"] == "2026-09-26T10:10:05.600000"
 
 
+def test_drift_only(override_get_db, case_with_members: Case, test_admin_user: User, db_session: Session):
+    """Test 15: Drift only without offset."""
+    from datetime import datetime, timezone
+    client = TestClient(app)
+    setup_auth(client, db_session, case_with_members, test_admin_user)
+
+    video_bytes = generate_test_video("drift_only_test")
+    import_resp = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence",
+        files={"file": ("drift_only.mp4", io.BytesIO(video_bytes), "video/mp4")}
+    )
+    ev_id = import_resp.json()["id"]
+
+    ev = db_session.query(Evidence).filter(Evidence.id == ev_id).first()
+    ev.start_time_osd = datetime(2026, 9, 26, 10, 10, 0, tzinfo=timezone.utc)
+    db_session.commit()
+
+    client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration",
+        json={
+            "offset_seconds": 0.0,
+            "drift_scale": 1.001,
+            "reference_timestamp": "2026-09-26T10:00:00Z"
+        }
+    )
+
+    evt_resp = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/timeline-events",
+        json={"media_time": 0.0, "event_type": "Observation", "title": "Drift only"}
+    )
+    evt = evt_resp.json()
+    assert evt["normalized_timestamp"] == "2026-09-26T10:10:00.600000"
+
+
+def test_no_calibration(override_get_db, case_with_members: Case, test_admin_user: User, db_session: Session):
+    """Test 16: No calibration exact matching."""
+    from datetime import datetime, timezone
+    client = TestClient(app)
+    setup_auth(client, db_session, case_with_members, test_admin_user)
+
+    video_bytes = generate_test_video("no_calib_test")
+    import_resp = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence",
+        files={"file": ("no_calib.mp4", io.BytesIO(video_bytes), "video/mp4")}
+    )
+    ev_id = import_resp.json()["id"]
+
+    ev = db_session.query(Evidence).filter(Evidence.id == ev_id).first()
+    ev.start_time_osd = datetime(2026, 9, 26, 10, 10, 0, tzinfo=timezone.utc)
+    db_session.commit()
+
+    evt_resp = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/timeline-events",
+        json={"media_time": 0.0, "event_type": "Observation", "title": "No calib"}
+    )
+    evt = evt_resp.json()
+    assert evt["source_timestamp"] == "2026-09-26T10:10:00"
+    assert evt["normalized_timestamp"] == "2026-09-26T10:10:00"
+
+
+def test_calibration_update(override_get_db, case_with_members: Case, test_admin_user: User, db_session: Session):
+    """Test 17: Update existing calibration record."""
+    client = TestClient(app)
+    setup_auth(client, db_session, case_with_members, test_admin_user)
+
+    video_bytes = generate_test_video("calib_update_test")
+    import_resp = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence",
+        files={"file": ("calib_upd.mp4", io.BytesIO(video_bytes), "video/mp4")}
+    )
+    ev_id = import_resp.json()["id"]
+
+    # Initial calibration
+    client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration",
+        json={"offset_seconds": 10.0}
+    )
+    count = db_session.query(TimestampCalibration).filter(TimestampCalibration.evidence_id == ev_id).count()
+    assert count == 1
+
+    # Update calibration
+    client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration",
+        json={"offset_seconds": -5.0, "drift_scale": 1.05, "reference_timestamp": "2026-09-26T10:00:00Z"}
+    )
+    
+    # Check count didn't increase
+    count = db_session.query(TimestampCalibration).filter(TimestampCalibration.evidence_id == ev_id).count()
+    assert count == 1
+
+    get_resp = client.get(f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration")
+    calib = get_resp.json()
+    assert calib["offset_seconds"] == -5.0
+    assert calib["drift_scale"] == 1.05
+
+
 def test_invalid_calibration_rejected(override_get_db, case_with_members: Case, test_admin_user: User, db_session: Session):
-    """Test 15: Invalid drift scale or missing reference."""
+    """Test 18: Invalid drift scale or missing reference."""
+    import math
     client = TestClient(app)
     setup_auth(client, db_session, case_with_members, test_admin_user)
 
@@ -490,15 +614,20 @@ def test_invalid_calibration_rejected(override_get_db, case_with_members: Case, 
     )
     ev_id = import_resp.json()["id"]
 
-    # I. INVALID CALIBRATION
-    r1 = client.post(
-        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration",
-        json={"offset_seconds": 0.0, "drift_scale": 0.0, "time_zone": "UTC"}
-    )
-    assert r1.status_code == 422 # Pydantic validation error
-
-    r2 = client.post(
-        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration",
-        json={"offset_seconds": 0.0, "drift_scale": 1.001, "time_zone": "UTC"} # Missing reference
-    )
+    # I. INVALID CALIBRATION: <= 0
+    r1 = client.post(f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration", json={"drift_scale": 0.0})
+    assert r1.status_code == 422
+    r2 = client.post(f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration", json={"drift_scale": -1.5})
     assert r2.status_code == 422
+
+    # Missing reference
+    r3 = client.post(f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration", json={"drift_scale": 1.001})
+    assert r3.status_code == 422
+
+    # Non-finite values
+    r4 = client.post(f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration", json={"drift_scale": "Infinity"})
+    assert r4.status_code == 422
+    r5 = client.post(f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration", json={"drift_scale": "-Infinity"})
+    assert r5.status_code == 422
+    r6 = client.post(f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration", json={"drift_scale": "NaN"})
+    assert r6.status_code == 422

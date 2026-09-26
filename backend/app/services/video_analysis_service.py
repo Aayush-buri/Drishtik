@@ -694,6 +694,7 @@ def set_calibration(
             "drift_scale": req.drift_scale,
             "reference_timestamp": req.reference_timestamp.isoformat() if req.reference_timestamp else None,
             "time_zone": req.time_zone,
+            "calibration_method": req.calibration_method,
             "reason": req.calibration_reason
         })
     )
