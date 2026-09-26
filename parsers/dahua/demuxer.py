@@ -119,15 +119,15 @@ class DahuaDemuxer(BaseDemuxer):
             return
 
         from parsers.common.demuxer import BufferedFileReader
-        
+
         with BufferedFileReader(file_path) as reader:
             file_size = file_path.stat().st_size
-            
+
             while True:
                 if reader.size < 4:
                     if not reader.read_more():
                         break
-                
+
                 dhav_pos = reader.find(self.HEADER_MAGIC)
                 if dhav_pos == -1:
                     consume_len = max(0, reader.size - 3)
@@ -135,21 +135,21 @@ class DahuaDemuxer(BaseDemuxer):
                     if not reader.read_more():
                         break
                     continue
-                
+
                 while reader.size < dhav_pos + 16:
                     if not reader.read_more():
                         break
-                
+
                 if reader.size < dhav_pos + 16:
                     break
-                
+
                 data = reader.data
                 frame_type_byte = data[dhav_pos + 4]
                 channel = data[dhav_pos + 5] + 1
                 seq_num = struct.unpack_from("<H", data, dhav_pos + 6)[0]
                 payload_size = struct.unpack_from("<I", data, dhav_pos + 8)[0]
                 raw_ts = struct.unpack_from("<I", data, dhav_pos + 12)[0]
-                
+
                 dt_osd = decode_dahua_timestamp(raw_ts)
 
                 if frame_type_byte in (0xFD, 0xFB, 0x80, 0x81):
@@ -165,37 +165,43 @@ class DahuaDemuxer(BaseDemuxer):
 
                 header_size = 24
                 payload_start = dhav_pos + header_size
-                
+
                 if payload_size == 0 or reader.global_offset + payload_start + payload_size > file_size:
                     search_offset = dhav_pos + 4
                     next_dhav = -1
+                    max_search_bytes = 4 * 1024 * 1024  # 4MB max search window
                     while True:
                         next_dhav = reader.find(self.HEADER_MAGIC, search_offset)
                         if next_dhav != -1:
                             break
+                        if reader.size >= dhav_pos + max_search_bytes:
+                            break
                         if not reader.read_more():
                             break
-                            
+
                     data = reader.data
+                    is_terminal = False
                     if next_dhav != -1:
                         actual_payload_size = next_dhav - payload_start
                         footer_pos = data.find(self.FOOTER_MAGIC, payload_start, next_dhav)
                         if footer_pos != -1:
                             actual_payload_size = footer_pos - payload_start
                     else:
-                        actual_payload_size = file_size - (reader.global_offset + payload_start)
+                        actual_payload_size = max(0, reader.size - payload_start)
+                        is_terminal = True
                 else:
                     actual_payload_size = payload_size
-                
+                    is_terminal = False
+
                 target_buffer_size = payload_start + actual_payload_size
                 while reader.size < target_buffer_size:
                     if not reader.read_more():
                         break
-                
+
                 data = reader.data
                 actual_payload_size = min(actual_payload_size, reader.size - payload_start)
                 payload = data[payload_start : payload_start + max(0, actual_payload_size)]
-                
+
                 yield DemuxedPacket(
                     packet_type=packet_type,
                     channel_index=channel,
@@ -206,16 +212,19 @@ class DahuaDemuxer(BaseDemuxer):
                     payload_size=len(payload),
                     extra={"seq_num": seq_num, "frame_type_byte": hex(frame_type_byte)},
                 )
-                
+
                 advance_to = payload_start + len(payload)
                 if reader.size < advance_to + 8:
                     reader.read_more()
                     data = reader.data
-                
+
                 if advance_to + 8 <= reader.size and data[advance_to : advance_to + 4] == self.FOOTER_MAGIC:
                     advance_to += 8
-                    
+
                 reader.advance(advance_to)
+
+                if is_terminal:
+                    break
 
     def extract_elementary_stream(
         self, file_path: Path, output_stream_path: Path
