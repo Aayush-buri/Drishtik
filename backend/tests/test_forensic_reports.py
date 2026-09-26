@@ -527,14 +527,11 @@ def test_report_audit_logging(populated_case, test_user: User, db_session: Sessi
 # ==============================================================================
 # 12. Authorization (Viewer cannot generate, Admin/Investigator can)
 # ==============================================================================
-def test_report_authorization(populated_case, test_user: User, viewer_user: User, db_session: Session):
+def test_report_authorization(populated_case, test_user: User, viewer_user: User, db_session: Session, override_get_db):
     """Verify role checks: Viewer cannot generate report (403), Admin can (200)."""
     case, _, _ = populated_case
     client = TestClient(app)
     from app.dependencies.auth import get_current_user
-    from app.db.database import get_db
-
-    app.dependency_overrides[get_db] = lambda: db_session
 
     # 1. Viewer attempt to generate report -> 403 Forbidden
     app.dependency_overrides[get_current_user] = lambda: viewer_user
@@ -552,19 +549,17 @@ def test_report_authorization(populated_case, test_user: User, viewer_user: User
     )
     assert resp_admin.status_code == 200
     assert resp_admin.json()["report_identifier"].startswith("RPT-")
+    app.dependency_overrides.clear()
 
 
 # ==============================================================================
 # 13. Case Isolation
 # ==============================================================================
-def test_case_isolation(populated_case, outsider_user: User, test_user: User, db_session: Session):
+def test_case_isolation(populated_case, outsider_user: User, test_user: User, db_session: Session, override_get_db):
     """Verify users from outside the case cannot list or export its reports."""
     case, _, _ = populated_case
     client = TestClient(app)
     from app.dependencies.auth import get_current_user
-    from app.db.database import get_db
-
-    app.dependency_overrides[get_db] = lambda: db_session
 
     # Generate a report as test_user
     report = report_service.generate_report(
@@ -582,6 +577,7 @@ def test_case_isolation(populated_case, outsider_user: User, test_user: User, db
     # Outsider attempt to export report -> 403 Forbidden
     resp_export = client.get(f"/api/v1/cases/{case.case_identifier}/reports/{report.report_identifier}/export")
     assert resp_export.status_code == 403
+    app.dependency_overrides.clear()
 
 
 # ==============================================================================

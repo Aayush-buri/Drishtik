@@ -29,7 +29,7 @@ def test_case(db_session: Session, test_user: User):
     db_session.commit()
     return case
 
-def test_import_evidence(test_case: Case, test_user: User, db_session: Session):
+def test_import_evidence(test_case: Case, test_user: User, db_session: Session, override_get_db):
     client = TestClient(app)
     from app.dependencies.auth import get_current_user, require_case_investigator_or_admin
     
@@ -59,7 +59,7 @@ def test_import_evidence(test_case: Case, test_user: User, db_session: Session):
     app.dependency_overrides = {}
     assert response_duplicate.status_code == 409
 
-def test_compare_evidence(test_case: Case, test_user: User, db_session: Session):
+def test_compare_evidence(test_case: Case, test_user: User, db_session: Session, override_get_db):
     client = TestClient(app)
     from app.dependencies.auth import require_case_investigator_or_admin
     app.dependency_overrides[require_case_investigator_or_admin] = lambda: db_session.query(CaseMember).first()
@@ -82,7 +82,7 @@ def test_compare_evidence(test_case: Case, test_user: User, db_session: Session)
     assert compare_resp.json()["result"] == "FILE_CONTENT_DIFFERS"
 
 
-def test_invalid_case_identifier(test_case: Case, test_user: User, db_session: Session):
+def test_invalid_case_identifier(test_case: Case, test_user: User, db_session: Session, override_get_db):
     client = TestClient(app)
     from app.dependencies.auth import get_current_user
     app.dependency_overrides[get_current_user] = lambda: test_user
@@ -102,7 +102,7 @@ def test_invalid_case_identifier(test_case: Case, test_user: User, db_session: S
     
     app.dependency_overrides = {}
 
-def test_get_evidence_list(test_case: Case, test_user: User, db_session: Session):
+def test_get_evidence_list(test_case: Case, test_user: User, db_session: Session, override_get_db):
     client = TestClient(app)
     from app.dependencies.auth import get_current_user, require_case_member
     
