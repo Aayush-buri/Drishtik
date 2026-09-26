@@ -83,13 +83,12 @@ def test_dahua_truncated_frame(tmp_path: Path):
     assert len(packets[0].data) == 26
 
 def test_dahua_invalid_payload_large_tail_no_next_dhav(tmp_path: Path, monkeypatch):
-    """A. Invalid payload_size with a very large tail containing NO next DHAV.
-    F. Verify that the fallback does not call read_more() enough times to effectively consume the entire synthetic multi-GB tail.
+    """E. Invalid payload + NO next DHAV until EOF.
+    F. Verify parser does not accumulate the entire region in BufferedFileReader RAM.
     """
     demuxer = DahuaDemuxer()
     file_path = tmp_path / "test_invalid_tail.dav"
 
-    # Create a frame with 0 payload_size (invalid)
     ts_val = encode_dahua_timestamp(datetime(2026, 9, 5, 10, 0, 0))
     header = bytearray(24)
     header[0:4] = b"DHAV"
@@ -98,31 +97,61 @@ def test_dahua_invalid_payload_large_tail_no_next_dhav(tmp_path: Path, monkeypat
     header[8:12] = (0).to_bytes(4, "little") # INVALID PAYLOAD SIZE
     header[12:16] = ts_val.to_bytes(4, "little")
 
-    # Very large tail, NO next DHAV
-    # To keep the test fast but prove bounded reads, we make a 10MB tail
-    # but monkeypatch read_more to count how many times it was called.
-    # The max search window is 4MB. The buffer size is 1MB.
-    # It should call read_more ~4-5 times, NOT 10 times.
-    tail = b"X" * (10 * 1024 * 1024)
+    # We make a 5MB tail
+    tail_len = 5 * 1024 * 1024
+    tail = b"X" * tail_len
     file_path.write_bytes(bytes(header) + tail)
 
-    read_more_calls = 0
+    max_ram_size = 0
     with monkeypatch.context() as m:
         original_read_more = BufferedFileReader.read_more
         def mocked_read_more(self):
-            nonlocal read_more_calls
-            read_more_calls += 1
-            return original_read_more(self)
+            nonlocal max_ram_size
+            res = original_read_more(self)
+            if self.size > max_ram_size:
+                max_ram_size = self.size
+            return res
         m.setattr(BufferedFileReader, "read_more", mocked_read_more)
 
         packets = list(demuxer.parse_packets(file_path))
 
-        # It should cap the search at 4MB, so it should read ~4-5 times.
-        # Definitely not 10 times.
-        assert read_more_calls <= 6
         assert len(packets) == 1
-        # The actual payload size yielded should be whatever was in the buffer (up to 4MB + original 1MB = ~5MB max)
-        assert len(packets[0].data) <= 5 * 1024 * 1024
+        assert len(packets[0].data) == tail_len
+        # The rolling search buffer should remain very small (buffer_size + a few bytes).
+        # We ensure it never grew to the full 5MB.
+        assert max_ram_size < 2 * 1024 * 1024
+
+def test_dahua_invalid_payload_next_dhav_far_away(tmp_path: Path):
+    """D. Invalid payload + next DHAV MORE THAN 4 MB AWAY:
+    - this is critical.
+    - the later DHAV packet MUST still be discovered.
+    - verify its data and stream_offset.
+    """
+    demuxer = DahuaDemuxer()
+    file_path = tmp_path / "test_far_dhav.dav"
+
+    ts_val = encode_dahua_timestamp(datetime(2026, 9, 5, 10, 0, 0))
+    header1 = bytearray(24)
+    header1[0:4] = b"DHAV"
+    header1[4] = 0xFD
+    header1[8:12] = (0).to_bytes(4, "little") # INVALID
+    header1[12:16] = ts_val.to_bytes(4, "little")
+
+    # Next DHAV is > 4MB away
+    gap_len = (4 * 1024 * 1024) + (500 * 1024) # 4.5 MB gap
+    gap = b"Y" * gap_len
+
+    payload2 = b"VALID_FAR_AWAY"
+    frame2 = create_dahua_frame(1, payload2)
+
+    file_path.write_bytes(bytes(header1) + gap + frame2)
+
+    packets = list(demuxer.parse_packets(file_path))
+    assert len(packets) == 2
+
+    assert len(packets[0].data) == gap_len
+    assert packets[1].data == payload2
+    assert packets[1].stream_offset == len(header1) + gap_len
 
 def test_dahua_invalid_payload_next_dhav_across_buffer(tmp_path: Path, monkeypatch):
     """B. Invalid payload_size where the next DHAV signature crosses the artificial reader buffer boundary."""

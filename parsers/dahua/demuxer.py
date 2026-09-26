@@ -51,6 +51,7 @@ ACTION ITEM FOR THE TEAM (do this before the SIH validation report is final):
 -------------------------------------------------------------------------
 """
 import struct
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
@@ -167,28 +168,67 @@ class DahuaDemuxer(BaseDemuxer):
                 payload_start = dhav_pos + header_size
 
                 if payload_size == 0 or reader.global_offset + payload_start + payload_size > file_size:
-                    search_offset = dhav_pos + 4
-                    next_dhav = -1
-                    max_search_bytes = 4 * 1024 * 1024  # 4MB max search window
-                    while True:
-                        next_dhav = reader.find(self.HEADER_MAGIC, search_offset)
-                        if next_dhav != -1:
-                            break
-                        if reader.size >= dhav_pos + max_search_bytes:
-                            break
+                    # Malformed/truncated payload: use a rolling bounded search to find next DHAV
+                    while reader.size < payload_start:
                         if not reader.read_more():
                             break
+                    if reader.size < payload_start:
+                        break  # Incomplete header
 
-                    data = reader.data
-                    is_terminal = False
-                    if next_dhav != -1:
-                        actual_payload_size = next_dhav - payload_start
-                        footer_pos = data.find(self.FOOTER_MAGIC, payload_start, next_dhav)
+                    stream_offset_absolute = reader.global_offset + dhav_pos
+                    reader.advance(payload_start)
+
+                    spool = tempfile.SpooledTemporaryFile(max_size=10*1024*1024)
+                    next_dhav_found = False
+
+                    while True:
+                        pos = reader.find(self.HEADER_MAGIC)
+                        if pos != -1:
+                            next_dhav_found = True
+                            spool.write(reader.data[:pos])
+                            reader.advance(pos)
+                            break
+
+                        if reader.size > 3:
+                            consume_len = reader.size - 3
+                            spool.write(reader.data[:consume_len])
+                            reader.advance(consume_len)
+
+                        if not reader.read_more():
+                            spool.write(reader.data)
+                            reader.advance(reader.size)
+                            break
+
+                    spool.seek(0)
+                    full_payload_data = spool.read()
+                    spool.close()
+
+                    if next_dhav_found:
+                        footer_pos = full_payload_data.find(self.FOOTER_MAGIC)
                         if footer_pos != -1:
-                            actual_payload_size = footer_pos - payload_start
+                            actual_payload_size = footer_pos
+                        else:
+                            actual_payload_size = len(full_payload_data)
                     else:
-                        actual_payload_size = max(0, reader.size - payload_start)
-                        is_terminal = True
+                        actual_payload_size = len(full_payload_data)
+
+                    payload = full_payload_data[:actual_payload_size]
+
+                    yield DemuxedPacket(
+                        packet_type=packet_type,
+                        channel_index=channel,
+                        data=bytes(payload),
+                        timestamp_osd=dt_osd,
+                        timestamp_ticks=raw_ts,
+                        stream_offset=stream_offset_absolute,
+                        payload_size=len(payload),
+                        extra={"seq_num": seq_num, "frame_type_byte": hex(frame_type_byte)},
+                    )
+
+                    if not next_dhav_found:
+                        break
+
+                    continue
                 else:
                     actual_payload_size = payload_size
                     is_terminal = False
