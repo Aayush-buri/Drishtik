@@ -52,6 +52,24 @@ from app.forensics.vendor_adapter import get_best_adapter_for_file
 
 logger = logging.getLogger(__name__)
 
+def normalize_timestamp(
+    source_timestamp: Optional[datetime],
+    calibration: Optional[TimestampCalibration]
+) -> Optional[datetime]:
+    """Applies affine drift and offset calibration to a forensic CCTV timestamp."""
+    if not source_timestamp:
+        return None
+    if not calibration:
+        return source_timestamp
+
+    offset = timedelta(seconds=calibration.offset_seconds)
+    if calibration.reference_timestamp is None or calibration.drift_scale == 1.0:
+        return source_timestamp + offset
+
+    delta = source_timestamp - calibration.reference_timestamp
+    return calibration.reference_timestamp + delta * calibration.drift_scale + offset
+
+
 
 def get_unified_video_representation(
     db: Session, case: Case, evidence: Evidence, user_id: int
@@ -197,6 +215,12 @@ def get_multi_camera_tracks(db: Session, case: Case, active_evidence: Evidence) 
     tracks: List[CameraTrackResponse] = []
     active_start = active_evidence.start_time_osd
 
+    active_calibration = db.query(TimestampCalibration).filter(
+        TimestampCalibration.case_id == case.id,
+        TimestampCalibration.evidence_id == active_evidence.id
+    ).first()
+    normalized_master_start = normalize_timestamp(active_evidence.start_time_osd, active_calibration)
+
     for vid in all_videos:
         # Determine if this video is playable (directly or via inspection proxy)
         is_playable = vid.is_natively_playable
@@ -216,9 +240,15 @@ def get_multi_camera_tracks(db: Session, case: Case, active_evidence: Evidence) 
         ch_name = f"CAM {ch_num:02d}"
 
         # Calculate time offset from master if timestamps are known
+        camera_calibration = db.query(TimestampCalibration).filter(
+            TimestampCalibration.case_id == case.id,
+            TimestampCalibration.evidence_id == vid.id
+        ).first()
+        normalized_camera_start = normalize_timestamp(vid.start_time_osd, camera_calibration)
+
         offset_seconds = 0.0
-        if active_start and vid.start_time_osd:
-            offset_seconds = (vid.start_time_osd - active_start).total_seconds()
+        if normalized_master_start and normalized_camera_start:
+            offset_seconds = (normalized_camera_start - normalized_master_start).total_seconds()
 
         tracks.append(
             CameraTrackResponse(
@@ -412,8 +442,7 @@ def create_timeline_event(
 
     norm_ts = req.normalized_timestamp
     if not norm_ts and src_ts:
-        offset = calib.offset_seconds if calib else 0.0
-        norm_ts = src_ts + timedelta(seconds=offset)
+        norm_ts = normalize_timestamp(src_ts, calib)
 
     evt_ident = f"EVT-{uuid.uuid4().hex[:6].upper()}"
 
@@ -523,8 +552,7 @@ def create_analysis_note(
 
     norm_ts = req.normalized_timestamp
     if not norm_ts and src_ts:
-        offset = calib.offset_seconds if calib else 0.0
-        norm_ts = src_ts + timedelta(seconds=offset)
+        norm_ts = normalize_timestamp(src_ts, calib)
 
     note = AnalysisNote(
         case_id=case.id,
@@ -632,6 +660,8 @@ def set_calibration(
 
     if calib:
         calib.offset_seconds = req.offset_seconds
+        calib.drift_scale = req.drift_scale
+        calib.reference_timestamp = req.reference_timestamp
         calib.time_zone = req.time_zone
         calib.calibration_reason = req.calibration_reason
         calib.calibration_method = req.calibration_method
@@ -641,6 +671,8 @@ def set_calibration(
             case_id=case.id,
             evidence_id=evidence.id,
             offset_seconds=req.offset_seconds,
+            drift_scale=req.drift_scale,
+            reference_timestamp=req.reference_timestamp,
             time_zone=req.time_zone,
             calibration_reason=req.calibration_reason,
             calibration_method=req.calibration_method,
@@ -659,6 +691,8 @@ def set_calibration(
         details=json.dumps({
             "evidence_identifier": evidence.evidence_identifier,
             "offset_seconds": req.offset_seconds,
+            "drift_scale": req.drift_scale,
+            "reference_timestamp": req.reference_timestamp.isoformat() if req.reference_timestamp else None,
             "time_zone": req.time_zone,
             "reason": req.calibration_reason
         })

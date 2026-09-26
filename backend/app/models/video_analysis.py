@@ -77,7 +77,9 @@ class TimestampCalibration(Base):
     case_id = Column(Integer, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
     evidence_id = Column(Integer, ForeignKey("evidence.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
 
-    offset_seconds = Column(Float, default=0.0, nullable=False)  # e.g. +192.0 (+3m12s drift)
+    offset_seconds = Column(Float, default=0.0, nullable=False)  # e.g. +192.0 (+3m12s offset)
+    drift_scale = Column(Float, default=1.0, nullable=False)
+    reference_timestamp = Column(DateTime(timezone=True), nullable=True)
     time_zone = Column(String(50), default="UTC", nullable=False)
     calibration_reason = Column(Text, nullable=True)  # e.g. "Compared against verified GPS/NTP reference"
     calibration_method = Column(String(100), default="MANUAL_CALIBRATION", nullable=False)

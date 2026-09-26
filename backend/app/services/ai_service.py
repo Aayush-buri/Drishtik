@@ -32,6 +32,7 @@ from app.models.ai_analysis import (
 )
 from app.services.evidence_service import compute_file_hashes
 from app.services.video_processing import extract_frame_image
+from app.services.video_analysis_service import normalize_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -130,12 +131,10 @@ def start_ai_analysis_job(
     db.add(audit_start)
     db.commit()
 
-    # 2. Check calibration for normalized timestamps
     calib = db.query(TimestampCalibration).filter(
         TimestampCalibration.case_id == case.id,
         TimestampCalibration.evidence_id == evidence.id
     ).first()
-    calib_offset = calib.offset_seconds if calib else 0.0
 
     # 3. Open video stream
     cap = cv2.VideoCapture(str(video_path))
@@ -176,7 +175,7 @@ def start_ai_analysis_job(
                 norm_ts = None
                 if evidence.start_time_osd:
                     src_ts = evidence.start_time_osd + timedelta(seconds=media_time)
-                    norm_ts = src_ts + timedelta(seconds=calib_offset)
+                    norm_ts = normalize_timestamp(src_ts, calib)
 
                 # A. YOLO Object Detection
                 if model is not None:

@@ -413,3 +413,92 @@ def test_video_analysis_session_persistence(override_get_db, case_with_members: 
     assert sess["last_media_time"] == 1.75
     assert sess["playback_speed"] == 1.5
     assert sess["timeline_zoom"] == 2.0
+
+
+def test_drift_and_offset_model(override_get_db, case_with_members: Case, test_admin_user: User, db_session: Session):
+    """Test 14: Drift + offset calibration on timestamp normalization."""
+    from datetime import datetime, timezone
+    client = TestClient(app)
+    setup_auth(client, db_session, case_with_members, test_admin_user)
+    
+    video_bytes = generate_test_video("drift_test")
+    import_resp = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence",
+        files={"file": ("drift_cam.mp4", io.BytesIO(video_bytes), "video/mp4")}
+    )
+    ev_id = import_resp.json()["id"]
+
+    # Explicitly set OSD start time directly in db to test formulas correctly
+    ev = db_session.query(Evidence).filter(Evidence.id == ev_id).first()
+    ev.start_time_osd = datetime(2026, 9, 26, 10, 10, 0, tzinfo=timezone.utc)
+    db_session.commit()
+
+    # D. DRIFT + OFFSET
+    client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration",
+        json={
+            "offset_seconds": 5.0,
+            "drift_scale": 1.001,
+            "reference_timestamp": "2026-09-26T10:00:00Z",
+            "time_zone": "UTC"
+        }
+    )
+
+    # Validate multi-camera tracks uses calibrated times
+    tracks_resp = client.get(f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/multi-camera-tracks")
+    assert tracks_resp.status_code == 200
+
+    # F. TIMELINE EVENT
+    evt_resp = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/timeline-events",
+        json={
+            "media_time": 0.0,
+            "event_type": "Observation",
+            "title": "Drift check"
+        }
+    )
+    if evt_resp.status_code != 200:
+        print("EVT POST ERROR:", evt_resp.json())
+    evt = evt_resp.json()
+    assert evt["source_timestamp"] == "2026-09-26T10:10:00"
+    # delta = 10 mins = 600 seconds
+    # calibrated = ref + 600 * 1.001 + 5 = ref + 600.6 + 5 = 10:00:00 + 605.6s = 10:10:05.600000
+    assert evt["normalized_timestamp"] == "2026-09-26T10:10:05.600000"
+
+    # G. ANALYSIS NOTE
+    note_resp = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/analysis-notes",
+        json={
+            "media_time": 0.0,
+            "note_text": "Drift note check"
+        }
+    )
+    note = note_resp.json()
+    assert note["source_timestamp"] == "2026-09-26T10:10:00"
+    assert note["normalized_timestamp"] == "2026-09-26T10:10:05.600000"
+
+
+def test_invalid_calibration_rejected(override_get_db, case_with_members: Case, test_admin_user: User, db_session: Session):
+    """Test 15: Invalid drift scale or missing reference."""
+    client = TestClient(app)
+    setup_auth(client, db_session, case_with_members, test_admin_user)
+
+    video_bytes = generate_test_video("drift_test_inv")
+    import_resp = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence",
+        files={"file": ("drift_cam_inv.mp4", io.BytesIO(video_bytes), "video/mp4")}
+    )
+    ev_id = import_resp.json()["id"]
+
+    # I. INVALID CALIBRATION
+    r1 = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration",
+        json={"offset_seconds": 0.0, "drift_scale": 0.0, "time_zone": "UTC"}
+    )
+    assert r1.status_code == 422 # Pydantic validation error
+
+    r2 = client.post(
+        f"/api/v1/cases/{case_with_members.case_identifier}/evidence/{ev_id}/calibration",
+        json={"offset_seconds": 0.0, "drift_scale": 1.001, "time_zone": "UTC"} # Missing reference
+    )
+    assert r2.status_code == 422

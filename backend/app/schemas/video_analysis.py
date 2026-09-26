@@ -3,7 +3,7 @@ timestamp calibration, and frame export.
 """
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from app.models.video_analysis import TimelineEventType
 
 
@@ -58,9 +58,19 @@ class AnalysisNoteResponse(BaseModel):
 
 class TimestampCalibrationCreate(BaseModel):
     offset_seconds: float = 0.0
+    drift_scale: float = 1.0
+    reference_timestamp: Optional[datetime] = None
     time_zone: str = "UTC"
     calibration_reason: Optional[str] = None
     calibration_method: str = "MANUAL_CALIBRATION"
+
+    @model_validator(mode='after')
+    def validate_drift_and_reference(self):
+        if self.drift_scale <= 0:
+            raise ValueError("drift_scale must be greater than zero")
+        if self.drift_scale != 1.0 and self.reference_timestamp is None:
+            raise ValueError("reference_timestamp is required when drift_scale != 1.0")
+        return self
 
 
 class TimestampCalibrationResponse(BaseModel):
@@ -68,6 +78,8 @@ class TimestampCalibrationResponse(BaseModel):
     case_id: int
     evidence_id: int
     offset_seconds: float
+    drift_scale: float
+    reference_timestamp: Optional[datetime] = None
     time_zone: str
     calibration_reason: Optional[str] = None
     calibration_method: str
