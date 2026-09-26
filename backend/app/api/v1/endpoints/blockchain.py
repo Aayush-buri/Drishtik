@@ -131,3 +131,42 @@ def verify_blockchain_integrity_endpoint(
         username=member.user.username if member.user else "Examiner"
     )
     return result
+
+@router.post("/{case_identifier}/blockchain/custody/verify")
+def verify_local_custody_chain_endpoint(
+    case_identifier: str,
+    member: CaseMember = Depends(require_case_investigator_or_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Verify the local cryptographic custody chain for the case.
+    This verifies the local tamper-evident links, NOT the blockchain ledger.
+    """
+    import json
+    from app.models.audit import AuditLog
+    
+    result = blockchain_service.verify_custody_chain(
+        db=db,
+        case=member.case
+    )
+    
+    action = "CUSTODY_CHAIN_VERIFIED" if result.get("verified") else "CUSTODY_CHAIN_FAILED"
+    
+    audit_log = AuditLog(
+        case_id=member.case.id,
+        user_id=member.user_id,
+        action=action,
+        target_identifier="CHAIN_VERIFICATION",
+        details=json.dumps({
+            "status": result.get("status"),
+            "total_events": result.get("total_events"),
+            "verified_events": result.get("verified_events"),
+            "first_invalid_event": result.get("first_invalid_event_identifier"),
+            "reason": result.get("reason")
+        })
+    )
+    db.add(audit_log)
+    db.commit()
+
+    return result
+

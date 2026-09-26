@@ -728,3 +728,290 @@ def test_ai_frame_evidence_anchoring(test_case: Case, test_user: User, db_sessio
     anchor = db_session.query(BlockchainAnchor).filter(BlockchainAnchor.evidence_id == frame_evidence.id).first()
     assert anchor is not None
     assert anchor.event_type == "AI_FRAME_EXPORTED"
+
+
+# ==============================================================================
+# 16. Local Cryptographic Chain of Custody Hardening Tests
+# ==============================================================================
+from app.services.blockchain_service import blockchain_service
+
+def test_genesis_event_deterministic_chain(test_case: Case, test_user: User, db_session: Session, mock_provider: MockBlockchainProvider):
+    # A. Genesis event uses 64-zero genesis hash
+    evidence = Evidence(
+        case_id=test_case.id,
+        evidence_identifier=f"EVID-TEST-{uuid.uuid4().hex[:6]}",
+        original_filename="genesis_test.mp4",
+        storage_path="/tmp/genesis_test.mp4",
+        source_type="Imported",
+        size_bytes=1000,
+        sha256=hashlib.sha256(b"genesis").hexdigest(),
+        file_extension="mp4",
+        media_type="Video",
+        imported_by=test_user.id,
+        evidence_status=EvidenceStatus.ORIGINAL,
+        integrity_status=IntegrityStatus.VERIFIED,
+    )
+    db_session.add(evidence)
+    db_session.commit()
+
+    ev1 = record_custody_and_anchor(
+        db=db_session,
+        case=test_case,
+        evidence=evidence,
+        action="EVIDENCE_IMPORTED",
+        user_id=test_user.id,
+        username=test_user.username
+    )
+
+    assert ev1.previous_event_hash == "0" * 64
+    assert len(ev1.chain_digest) == 64
+
+    # B. Two-event chain
+    ev2 = record_custody_and_anchor(
+        db=db_session,
+        case=test_case,
+        evidence=evidence,
+        action="EVIDENCE_VIEWED",
+        user_id=test_user.id,
+        username=test_user.username
+    )
+
+    assert ev2.previous_event_hash == ev1.chain_digest
+    assert len(ev2.chain_digest) == 64
+
+    verification = blockchain_service.verify_custody_chain(db_session, test_case, evidence)
+    print("GENESIS TEST VERIFICATION:", verification)
+    assert verification["verified"] is True
+    assert verification["status"] == "VERIFIED"
+
+def test_tampered_previous_link(test_case: Case, test_user: User, db_session: Session, mock_provider: MockBlockchainProvider):
+    # C. Tampered previous link
+    evidence = Evidence(
+        case_id=test_case.id,
+        evidence_identifier=f"EVID-TEST-{uuid.uuid4().hex[:6]}",
+        original_filename="tampered_test.mp4",
+        storage_path="/tmp/tampered_test.mp4",
+        source_type="Imported",
+        size_bytes=1000,
+        sha256=hashlib.sha256(b"tampered").hexdigest(),
+        file_extension="mp4",
+        media_type="Video",
+        imported_by=test_user.id,
+        evidence_status=EvidenceStatus.ORIGINAL,
+        integrity_status=IntegrityStatus.VERIFIED,
+    )
+    db_session.add(evidence)
+    db_session.commit()
+
+    ev1 = record_custody_and_anchor(db=db_session, case=test_case, evidence=evidence, action="A1", user_id=test_user.id, username=test_user.username)
+    ev2 = record_custody_and_anchor(db=db_session, case=test_case, evidence=evidence, action="A2", user_id=test_user.id, username=test_user.username)
+
+    ev2.previous_event_hash = "1" * 64
+    db_session.commit()
+
+    verification = blockchain_service.verify_custody_chain(db_session, test_case, evidence)
+    assert verification["verified"] is False
+    assert verification["status"] == "MISMATCH"
+
+def test_tampered_chain_digest(test_case: Case, test_user: User, db_session: Session, mock_provider: MockBlockchainProvider):
+    # D. Tampered chain digest
+    evidence = Evidence(
+        case_id=test_case.id,
+        evidence_identifier=f"EVID-TEST-{uuid.uuid4().hex[:6]}",
+        original_filename="digest_test.mp4",
+        storage_path="/tmp/digest_test.mp4",
+        source_type="Imported",
+        size_bytes=1000,
+        sha256=hashlib.sha256(b"digest").hexdigest(),
+        file_extension="mp4",
+        media_type="Video",
+        imported_by=test_user.id,
+        evidence_status=EvidenceStatus.ORIGINAL,
+        integrity_status=IntegrityStatus.VERIFIED,
+    )
+    db_session.add(evidence)
+    db_session.commit()
+
+    ev1 = record_custody_and_anchor(db=db_session, case=test_case, evidence=evidence, action="A1", user_id=test_user.id, username=test_user.username)
+    
+    ev1.chain_digest = "1" * 64
+    db_session.commit()
+
+    verification = blockchain_service.verify_custody_chain(db_session, test_case, evidence)
+    assert verification["verified"] is False
+    assert verification["status"] == "MISMATCH"
+
+def test_tampered_immutable_field(test_case: Case, test_user: User, db_session: Session, mock_provider: MockBlockchainProvider):
+    # E. Tampered immutable event field
+    evidence = Evidence(
+        case_id=test_case.id,
+        evidence_identifier=f"EVID-TEST-{uuid.uuid4().hex[:6]}",
+        original_filename="immutable_test.mp4",
+        storage_path="/tmp/immutable_test.mp4",
+        source_type="Imported",
+        size_bytes=1000,
+        sha256=hashlib.sha256(b"immutable").hexdigest(),
+        file_extension="mp4",
+        media_type="Video",
+        imported_by=test_user.id,
+        evidence_status=EvidenceStatus.ORIGINAL,
+        integrity_status=IntegrityStatus.VERIFIED,
+    )
+    db_session.add(evidence)
+    db_session.commit()
+
+    ev1 = record_custody_and_anchor(db=db_session, case=test_case, evidence=evidence, action="A1", user_id=test_user.id, username=test_user.username)
+    
+    ev1.action = "TAMPERED_ACTION"
+    db_session.commit()
+
+    verification = blockchain_service.verify_custody_chain(db_session, test_case, evidence)
+    assert verification["verified"] is False
+    assert verification["status"] == "MISMATCH"
+
+def test_metadata_determinism(test_case: Case, test_user: User, db_session: Session, mock_provider: MockBlockchainProvider):
+    # F. Metadata determinism
+    import json
+    evidence = Evidence(
+        case_id=test_case.id,
+        evidence_identifier=f"EVID-TEST-{uuid.uuid4().hex[:6]}",
+        original_filename="meta_test.mp4",
+        storage_path="/tmp/meta_test.mp4",
+        source_type="Imported",
+        size_bytes=1000,
+        sha256=hashlib.sha256(b"meta").hexdigest(),
+        file_extension="mp4",
+        media_type="Video",
+        imported_by=test_user.id,
+        evidence_status=EvidenceStatus.ORIGINAL,
+        integrity_status=IntegrityStatus.VERIFIED,
+    )
+    db_session.add(evidence)
+    db_session.commit()
+
+    ev1 = record_custody_and_anchor(
+        db=db_session, case=test_case, evidence=evidence, action="A1", user_id=test_user.id, username=test_user.username,
+        metadata={"b": 1, "a": 2}
+    )
+    
+    meta_str = json.dumps({"a": 2, "b": 1}, sort_keys=True, separators=(",", ":"))
+    expected_hash = hashlib.sha256(meta_str.encode("utf-8")).hexdigest()
+    
+    assert ev1.metadata_hash == expected_hash
+
+def test_offline_fabric_handling(test_case: Case, test_user: User, db_session: Session):
+    # G. Offline Fabric
+    class OfflineProvider(MockBlockchainProvider):
+        def anchor_custody_event(self, *args, **kwargs) -> AnchorResult:
+            return AnchorResult(success=False, status="UNAVAILABLE", timestamp=None, transaction_id=None, block_number=None, channel=None, chaincode=None, metadata_hash=None, error_message="Offline")
+            
+    set_blockchain_provider(OfflineProvider())
+    
+    try:
+        evidence = Evidence(
+            case_id=test_case.id,
+            evidence_identifier=f"EVID-TEST-{uuid.uuid4().hex[:6]}",
+            original_filename="offline_test.mp4",
+            storage_path="/tmp/offline_test.mp4",
+            source_type="Imported",
+            size_bytes=1000,
+            sha256=hashlib.sha256(b"offline").hexdigest(),
+            file_extension="mp4",
+            media_type="Video",
+            imported_by=test_user.id,
+            evidence_status=EvidenceStatus.ORIGINAL,
+            integrity_status=IntegrityStatus.VERIFIED,
+        )
+        db_session.add(evidence)
+        db_session.commit()
+    
+        ev1 = record_custody_and_anchor(db=db_session, case=test_case, evidence=evidence, action="A1", user_id=test_user.id, username=test_user.username)
+        
+        assert ev1.blockchain_status == "UNAVAILABLE"
+        assert ev1.blockchain_tx_id is None
+        assert ev1.previous_event_hash == "0" * 64
+        assert len(ev1.chain_digest) == 64
+    finally:
+        set_blockchain_provider(MockBlockchainProvider())
+def test_legacy_compatibility(test_case: Case, test_user: User, db_session: Session, mock_provider: MockBlockchainProvider):
+    # H. Legacy compatibility
+    from datetime import datetime, timezone
+    evidence = Evidence(
+        case_id=test_case.id,
+        evidence_identifier=f"EVID-TEST-{uuid.uuid4().hex[:6]}",
+        original_filename="legacy_test.mp4",
+        storage_path="/tmp/legacy_test.mp4",
+        source_type="Imported",
+        size_bytes=1000,
+        sha256=hashlib.sha256(b"legacy").hexdigest(),
+        file_extension="mp4",
+        media_type="Video",
+        imported_by=test_user.id,
+        evidence_status=EvidenceStatus.ORIGINAL,
+        integrity_status=IntegrityStatus.VERIFIED,
+    )
+    db_session.add(evidence)
+    db_session.commit()
+
+    legacy_event = CustodyEvent(
+        event_identifier=blockchain_service._generate_identifier("CUST"),
+        case_id=test_case.id,
+        evidence_id=evidence.id,
+        action="LEGACY_ACTION",
+        actor_id=test_user.id,
+        actor_username=test_user.username,
+        timestamp=datetime.now(timezone.utc),
+        sha256=evidence.sha256,
+        previous_event_hash=None,
+        chain_digest=None
+    )
+    db_session.add(legacy_event)
+    db_session.commit()
+
+    verification = blockchain_service.verify_custody_chain(db_session, test_case, evidence)
+    assert verification["verified"] is False
+    assert verification["status"] == "UNVERIFIED"
+
+from httpx import AsyncClient
+import pytest
+
+@pytest.mark.asyncio
+async def test_api_verification_endpoint(async_client, db_session: Session, test_case: Case, test_user: User):
+    from app.main import app
+    from app.dependencies.auth import require_case_investigator_or_admin
+    from app.models.case import CaseMember, RoleEnum
+    
+    evidence = Evidence(
+        case_id=test_case.id,
+        evidence_identifier=f"EVID-TEST-{uuid.uuid4().hex[:6]}",
+        original_filename="api_test.mp4",
+        storage_path="/tmp/api_test.mp4",
+        source_type="Imported",
+        size_bytes=1000,
+        sha256=hashlib.sha256(b"api").hexdigest(),
+        file_extension="mp4",
+        media_type="Video",
+        imported_by=test_user.id,
+        evidence_status=EvidenceStatus.ORIGINAL,
+        integrity_status=IntegrityStatus.VERIFIED,
+    )
+    db_session.add(evidence)
+    db_session.commit()
+
+    record_custody_and_anchor(db=db_session, case=test_case, evidence=evidence, action="A1", user_id=test_user.id, username=test_user.username)
+
+    def override_auth():
+        return CaseMember(case_id=test_case.id, user_id=test_user.id, role=RoleEnum.INVESTIGATOR, case=test_case, user=test_user)
+        
+    app.dependency_overrides[require_case_investigator_or_admin] = override_auth
+    
+    try:
+        response = await async_client.post(
+            f"/api/v1/cases/{test_case.case_identifier}/blockchain/custody/verify"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["verified"] is True
+        assert data["status"] == "VERIFIED"
+    finally:
+        app.dependency_overrides = {}

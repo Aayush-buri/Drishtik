@@ -27,6 +27,8 @@ class CustodyEventResponse(BaseModel):
     timestamp: datetime
     sha256: str
     previous_event_reference: Optional[str] = None
+    previous_event_hash: Optional[str] = None
+    chain_digest: Optional[str] = None
     blockchain_tx_id: Optional[str] = None
     blockchain_status: str
     blockchain_anchored_at: Optional[datetime] = None

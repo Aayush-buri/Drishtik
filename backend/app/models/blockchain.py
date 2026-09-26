@@ -31,6 +31,8 @@ class CustodyEvent(Base):
 
     sha256 = Column(String(64), nullable=False)
     previous_event_reference = Column(String(64), nullable=True)  # hash/identifier of previous event in custody chain
+    previous_event_hash = Column(String(64), nullable=True)
+    chain_digest = Column(String(64), nullable=True)
 
     # Blockchain Anchor Linkage
     blockchain_tx_id = Column(String(128), nullable=True, index=True)

@@ -29,7 +29,19 @@ class BlockchainService:
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
 
+
+    GENESIS_CHAIN_HASH = "0" * 64
+
+    @staticmethod
+    def canonicalize_custody_event(payload: Dict[str, Any]) -> str:
+        return json.dumps(payload, sort_keys=True, separators=(',', ':'))
+
+    @staticmethod
+    def calculate_chain_digest(canonical_payload: str) -> str:
+        return hashlib.sha256(canonical_payload.encode('utf-8')).hexdigest()
+
     def get_blockchain_health(self) -> Dict[str, Any]:
+
         provider = get_blockchain_provider()
         return provider.health_check()
 
@@ -60,10 +72,33 @@ class BlockchainService:
             .first()
         )
         previous_ref = last_event.event_identifier if last_event else None
+        previous_hash = last_event.chain_digest if last_event and getattr(last_event, "chain_digest", None) else self.GENESIS_CHAIN_HASH
+
+        event_identifier = self._generate_identifier("CUST")
+        
+        # Determine local metadata hash
+        meta_str = json.dumps(meta, sort_keys=True, separators=(",", ":"))
+        metadata_hash = hashlib.sha256(meta_str.encode("utf-8")).hexdigest()
+
+        # Build canonical payload
+        payload = {
+            "action": action,
+            "actor_id": user_id,
+            "actor_username": username,
+            "case_id": case.id,
+            "event_identifier": event_identifier,
+            "evidence_id": evidence.id,
+            "metadata_hash": metadata_hash,
+            "previous_event_hash": previous_hash,
+            "sha256": evidence.sha256 or "",
+            "timestamp_utc": current_time.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        }
+        canonical_payload = self.canonicalize_custody_event(payload)
+        chain_digest = self.calculate_chain_digest(canonical_payload)
 
         # 2. Create local CustodyEvent record
         custody_event = CustodyEvent(
-            event_identifier=self._generate_identifier("CUST"),
+            event_identifier=event_identifier,
             case_id=case.id,
             evidence_id=evidence.id,
             audit_log_id=audit_log_id,
@@ -73,6 +108,9 @@ class BlockchainService:
             timestamp=current_time,
             sha256=evidence.sha256 or "",
             previous_event_reference=previous_ref,
+            previous_event_hash=previous_hash,
+            metadata_hash=metadata_hash,
+            chain_digest=chain_digest,
             blockchain_status="NOT_ANCHORED",
             verification_status="UNVERIFIED"
         )
@@ -272,7 +310,112 @@ class BlockchainService:
             "block_number": verification_result.block_number,
             "blockchain_status": evidence.blockchain_status,
             "reason": reason,
-            "verified_at": current_time.isoformat()
+            "verified_at": current_time.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        }
+
+
+    def verify_custody_chain(
+        self,
+        db: Session,
+        case: Case,
+        evidence: Optional[Evidence] = None
+    ) -> Dict[str, Any]:
+        """
+        Verifies the deterministic local cryptographic chain of custody.
+        """
+        query = db.query(CustodyEvent).filter(CustodyEvent.case_id == case.id)
+        if evidence:
+            query = query.filter(CustodyEvent.evidence_id == evidence.id)
+            
+        events = query.order_by(CustodyEvent.timestamp.asc(), CustodyEvent.id.asc()).all()
+        
+        if not events:
+            return {
+                "verified": False,
+                "status": "EMPTY",
+                "total_events": 0,
+                "verified_events": 0,
+                "first_invalid_event_identifier": None,
+                "expected_previous_event_hash": None,
+                "recorded_previous_event_hash": None,
+                "expected_chain_digest": None,
+                "recorded_chain_digest": None,
+                "reason": "No custody events found."
+            }
+
+        expected_previous_hash = self.GENESIS_CHAIN_HASH
+        
+        for idx, event in enumerate(events):
+            if not getattr(event, "previous_event_hash", None) or not getattr(event, "chain_digest", None):
+                return {
+                    "verified": False,
+                    "status": "UNVERIFIED",
+                    "total_events": len(events),
+                    "verified_events": idx,
+                    "first_invalid_event_identifier": event.event_identifier,
+                    "expected_previous_event_hash": expected_previous_hash,
+                    "recorded_previous_event_hash": event.previous_event_hash,
+                    "expected_chain_digest": None,
+                    "recorded_chain_digest": event.chain_digest,
+                    "reason": f"Event {event.event_identifier} is missing cryptographic link fields."
+                }
+
+            if event.previous_event_hash != expected_previous_hash:
+                return {
+                    "verified": False,
+                    "status": "MISMATCH",
+                    "total_events": len(events),
+                    "verified_events": idx,
+                    "first_invalid_event_identifier": event.event_identifier,
+                    "expected_previous_event_hash": expected_previous_hash,
+                    "recorded_previous_event_hash": event.previous_event_hash,
+                    "expected_chain_digest": None,
+                    "recorded_chain_digest": event.chain_digest,
+                    "reason": f"Event {event.event_identifier} previous_event_hash does not match expected hash."
+                }
+                
+            payload = {
+                "action": event.action,
+                "actor_id": event.actor_id,
+                "actor_username": event.actor_username,
+                "case_id": event.case_id,
+                "event_identifier": event.event_identifier,
+                "evidence_id": event.evidence_id,
+                "metadata_hash": event.metadata_hash,
+                "previous_event_hash": event.previous_event_hash,
+                "sha256": event.sha256,
+                "timestamp_utc": event.timestamp.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+            }
+            canonical_payload = self.canonicalize_custody_event(payload)
+            expected_digest = self.calculate_chain_digest(canonical_payload)
+            
+            if event.chain_digest != expected_digest:
+                return {
+                    "verified": False,
+                    "status": "MISMATCH",
+                    "total_events": len(events),
+                    "verified_events": idx,
+                    "first_invalid_event_identifier": event.event_identifier,
+                    "expected_previous_event_hash": expected_previous_hash,
+                    "recorded_previous_event_hash": event.previous_event_hash,
+                    "expected_chain_digest": expected_digest,
+                    "recorded_chain_digest": event.chain_digest,
+                    "reason": f"Event {event.event_identifier} chain_digest does not match computed payload digest."
+                }
+                
+            expected_previous_hash = event.chain_digest
+            
+        return {
+            "verified": True,
+            "status": "VERIFIED",
+            "total_events": len(events),
+            "verified_events": len(events),
+            "first_invalid_event_identifier": None,
+            "expected_previous_event_hash": None,
+            "recorded_previous_event_hash": None,
+            "expected_chain_digest": None,
+            "recorded_chain_digest": None,
+            "reason": "All cryptographic chain links verified successfully."
         }
 
     def list_case_custody_events(self, db: Session, case: Case) -> List[CustodyEvent]:
@@ -341,6 +484,7 @@ blockchain_service = BlockchainService()
 # Module-level convenience functions
 record_custody_and_anchor = blockchain_service.record_custody_and_anchor
 verify_blockchain_integrity = blockchain_service.verify_blockchain_integrity
+verify_custody_chain = blockchain_service.verify_custody_chain
 list_case_custody_events = blockchain_service.list_case_custody_events
 get_evidence_blockchain_status = blockchain_service.get_evidence_blockchain_status
 get_blockchain_health = blockchain_service.get_blockchain_health
