@@ -19,6 +19,7 @@ from app.forensics.acquisition import (
     NetworkDeviceTarget,
     probe_network_device,
 )
+from app.forensics.acquisition.disk_image import DiskImageAdapter, DiskImageInspectionStatus
 from app.forensics.device_provider import get_device_provider
 from app.forensics.signatures.signature_probe import probe_file
 from app.services.video_processing import extract_video_metadata
@@ -77,7 +78,7 @@ def enrich_acquisition_metadata(acq: Acquisition, db: Session) -> Acquisition:
         acq.device_name = f"{acq.device.manufacturer or ''} {acq.device.model or ''}".strip()
     if acq.operator:
         acq.operator_name = acq.operator.display_name or acq.operator.username
-    
+
     # Check if evidence exists for this acquisition
     ev = db.query(Evidence).filter(Evidence.acquisition_id == acq.id, Evidence.is_deleted == False).first()
     if ev:
@@ -317,6 +318,40 @@ def execute_acquisition(
     # Perform forensic acquisition using vendor-agnostic adapter
     try:
         adapter = get_acquisition_adapter(method, src_p)
+
+        is_disk_image = (method == AcquisitionMethod.DISK_IMAGE or str(method) == "DISK_IMAGE")
+        if is_disk_image and isinstance(adapter, DiskImageAdapter):
+            inspection = adapter.inspect_image()
+
+            if inspection.status in (DiskImageInspectionStatus.UNSUPPORTED, DiskImageInspectionStatus.INVALID_OR_UNREADABLE):
+                raise ValueError(f"Disk image inspection failed [{inspection.status.value}]: {inspection.message}")
+
+            inspection_details = {
+                "acquisition_identifier": acq_ident,
+                "status": inspection.status.value,
+                "format": inspection.info.image_format if inspection.info else "UNKNOWN",
+                "message": inspection.message
+            }
+            if inspection.info and inspection.info.sector_size:
+                inspection_details["sector_size"] = inspection.info.sector_size
+
+            audit_inspection = AuditLog(
+                case_id=case.id,
+                user_id=user_id,
+                action="ACQUISITION_DISK_INSPECTED",
+                target_identifier=acq_ident,
+                details=json.dumps(inspection_details)
+            )
+            db.add(audit_inspection)
+
+            notes_addon = f"\n[Disk Image Inspection: {inspection.status.value}] {inspection.info.image_format if inspection.info else ''}"
+            if inspection.info and inspection.info.sector_size:
+                notes_addon += f" (Sector Size: {inspection.info.sector_size})"
+            if inspection.message:
+                notes_addon += f" - {inspection.message}"
+            acquisition.notes = (acquisition.notes or "") + notes_addon
+            db.commit()
+
         result = adapter.acquire(destination_dir)
 
         if pre_stat and src_p.exists() and src_p.is_file():
