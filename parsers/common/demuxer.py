@@ -85,3 +85,54 @@ class BaseDemuxer(ABC):
     ) -> DemuxSummary:
         """Extract compressed video elementary stream (H.264/H.265 Annex B) and return summary."""
         pass
+
+
+class BufferedFileReader:
+    """Minimal helper for bounded streaming parsing."""
+    def __init__(self, file_path: Path, buffer_size: int = 1048576):
+        self.file_path = file_path
+        self.buffer_size = buffer_size
+        self._file = None
+        self._buffer = bytearray()
+        self._global_offset = 0
+
+    def __enter__(self):
+        self._file = open(self.file_path, "rb")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._file:
+            self._file.close()
+
+    def read_more(self) -> bool:
+        """Reads a chunk from the file into the buffer. Returns True if data was read."""
+        if not self._file:
+            return False
+        chunk = self._file.read(self.buffer_size)
+        if not chunk:
+            return False
+        self._buffer.extend(chunk)
+        return True
+
+    def advance(self, bytes_count: int):
+        """Consume bytes_count from the front of the buffer and advance global offset."""
+        if bytes_count > len(self._buffer):
+            bytes_count = len(self._buffer)
+        del self._buffer[:bytes_count]
+        self._global_offset += bytes_count
+
+    def find(self, sub: bytes, start: int = 0) -> int:
+        return self._buffer.find(sub, start)
+
+    @property
+    def data(self) -> bytearray:
+        return self._buffer
+
+    @property
+    def global_offset(self) -> int:
+        return self._global_offset
+
+    @property
+    def size(self) -> int:
+        return len(self._buffer)
+

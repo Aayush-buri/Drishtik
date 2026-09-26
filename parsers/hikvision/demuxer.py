@@ -80,50 +80,80 @@ class HikvisionDemuxer(BaseDemuxer):
         if not file_path.is_file():
             return
 
-        with open(file_path, "rb") as f:
-            data = f.read()
-
-        file_size = len(data)
-        offset = 0
-
-        # If HIKV header, skip header (typically 16 to 40 bytes)
-        if data.startswith(self.HIKV_MAGIC):
-            ps_pos = data.find(self.MPEG_PS_PACK, 4)
-            if ps_pos != -1:
-                offset = ps_pos
-            else:
-                offset = 16
-
-        # Scan for PES video packets (00 00 01 E0) or PS packs
-        while offset < file_size:
-            pes_pos = data.find(self.PES_VIDEO_PREFIX, offset)
-            if pes_pos == -1 or pes_pos + 6 > file_size:
-                # If no PES packets, check if raw NAL stream follows
-                break
-
-            # PES packet length is in bytes 4..6
-            pes_len = int.from_bytes(data[pes_pos + 4 : pes_pos + 6], "big")
-            header_len = 6
-            # PES optional header check
-            if pes_pos + 9 <= file_size:
-                opt_header_len = data[pes_pos + 8]
-                header_len = 9 + opt_header_len
-
-            payload_start = pes_pos + header_len
-            payload_end = (pes_pos + 6 + pes_len) if pes_len > 0 else (payload_start + 4096)
-            payload_end = min(payload_end, file_size)
-
-            payload = data[payload_start:payload_end]
-
-            yield DemuxedPacket(
-                packet_type=PacketType.VIDEO_I if b"\x00\x00\x00\x01\x67" in payload or b"\x00\x00\x00\x01\x65" in payload else PacketType.VIDEO_P,
-                channel_index=1,
-                data=payload,
-                stream_offset=pes_pos,
-                payload_size=len(payload),
-            )
-
-            offset = max(payload_end, pes_pos + 6)
+        from parsers.common.demuxer import BufferedFileReader
+        
+        with BufferedFileReader(file_path) as reader:
+            file_size = file_path.stat().st_size
+            
+            while reader.size < 64:
+                if not reader.read_more():
+                    break
+                    
+            if reader.size > 0 and reader.data.startswith(self.HIKV_MAGIC):
+                ps_pos = reader.find(self.MPEG_PS_PACK, 4)
+                if ps_pos != -1:
+                    reader.advance(ps_pos)
+                else:
+                    reader.advance(16)
+                    
+            while True:
+                pes_pos = reader.find(self.PES_VIDEO_PREFIX)
+                if pes_pos == -1:
+                    consume_len = max(0, reader.size - 3)
+                    reader.advance(consume_len)
+                    if not reader.read_more():
+                        break
+                    continue
+                    
+                while reader.size < pes_pos + 6:
+                    if not reader.read_more():
+                        break
+                        
+                if reader.size < pes_pos + 6:
+                    break
+                    
+                data = reader.data
+                pes_len = int.from_bytes(data[pes_pos + 4 : pes_pos + 6], "big")
+                header_len = 6
+                
+                while reader.size < pes_pos + 9:
+                    if not reader.read_more():
+                        break
+                        
+                data = reader.data
+                if pes_pos + 9 <= reader.size:
+                    opt_header_len = data[pes_pos + 8]
+                    header_len = 9 + opt_header_len
+                    
+                payload_start = pes_pos + header_len
+                if pes_len > 0:
+                    target_size = pes_pos + 6 + pes_len
+                else:
+                    target_size = payload_start + 4096
+                    
+                while reader.size < target_size:
+                    if not reader.read_more():
+                        break
+                        
+                data = reader.data
+                payload_end = min(target_size, reader.size)
+                
+                if payload_start >= payload_end:
+                    reader.advance(pes_pos + 6)
+                    continue
+                    
+                payload = data[payload_start:payload_end]
+                
+                yield DemuxedPacket(
+                    packet_type=PacketType.VIDEO_I if b"\x00\x00\x00\x01\x67" in payload or b"\x00\x00\x00\x01\x65" in payload else PacketType.VIDEO_P,
+                    channel_index=1,
+                    data=bytes(payload),
+                    stream_offset=reader.global_offset + pes_pos,
+                    payload_size=len(payload),
+                )
+                
+                advance_to = max(payload_end, pes_pos + 6)
+                reader.advance(advance_to)
 
     def extract_elementary_stream(
         self, file_path: Path, output_stream_path: Path
