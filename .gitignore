@@ -49,6 +49,7 @@
 # Forensic & Evidence Directories
 /evidence/
 data/**/evidence/
+backend/data/case_data/
 forensic_images/
 sample_data/*
 !sample_data/.gitkeep
