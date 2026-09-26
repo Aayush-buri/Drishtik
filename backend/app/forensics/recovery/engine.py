@@ -16,7 +16,7 @@ import uuid
 class DiskImageInfo:
     image_format: str
     size_bytes: int
-    sector_size: int = 512
+    sector_size: Optional[int] = 512
     is_supported: bool = True
     details: str = ""
 
