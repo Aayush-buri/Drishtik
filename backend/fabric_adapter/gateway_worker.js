@@ -129,15 +129,31 @@ async function start() {
                 
                 const { transactionName, transactionArgs } = args;
                 try {
-                    let resultBytes;
                     if (method === 'evaluate') {
-                        resultBytes = await contract.evaluateTransaction(transactionName, ...transactionArgs);
+                        const resultBytes = await contract.evaluateTransaction(transactionName, ...transactionArgs);
+                        const resultStr = Buffer.from(resultBytes).toString('utf8');
+                        console.log(JSON.stringify({ id, error: null, result: resultStr ? JSON.parse(resultStr) : null }));
                     } else {
-                        // For sprint 7B: real submission
-                        resultBytes = await contract.submitTransaction(transactionName, ...transactionArgs);
+                        // For sprint 7B: real submission with commit wait
+                        const commit = await contract.submitAsync(transactionName, { arguments: transactionArgs });
+                        const status = await commit.getStatus();
+                        const resultBytes = commit.getResult();
+                        const transactionId = commit.getTransactionId();
+                        
+                        const resultStr = Buffer.from(resultBytes).toString('utf8');
+                        const parsedResult = resultStr ? JSON.parse(resultStr) : null;
+                        
+                        console.log(JSON.stringify({ 
+                            id, 
+                            error: null, 
+                            result: {
+                                payload: parsedResult,
+                                transaction_id: transactionId,
+                                block_number: status.blockNumber ? status.blockNumber.toString() : null,
+                                successful: status.successful
+                            }
+                        }));
                     }
-                    const resultStr = Buffer.from(resultBytes).toString('utf8');
-                    console.log(JSON.stringify({ id, error: null, result: resultStr ? JSON.parse(resultStr) : null }));
                 } catch (err) {
                     let errMsg = err.message;
                     if (err.details && err.details.length > 0) {

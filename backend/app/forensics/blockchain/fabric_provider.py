@@ -194,21 +194,92 @@ class HyperledgerFabricProvider(BlockchainProvider):
         metadata: Dict[str, Any]
     ) -> AnchorResult:
         meta_hash = self._compute_metadata_hash(metadata)
+        health = self.health_check()
+        status_code = health.get("status", "UNAVAILABLE")
 
-        # Strictly never fabricate transaction IDs, block numbers, or synthetic ANCHORED status.
-        status_code = "UNAVAILABLE"
-        msg = "Hyperledger Fabric Gateway transaction submission is not configured for Sprint 7A. Local SHA-256 integrity and audit trail preserved."
-        logger.info(f"Fabric provider returning non-blocking {status_code} for evidence {evidence_identifier}")
+        if status_code != "CONNECTED":
+            msg = "Hyperledger Fabric Gateway is unavailable/offline. Local SHA-256 integrity and audit trail preserved."
+            logger.info(f"Fabric provider returning non-blocking {status_code} for evidence {evidence_identifier}")
+            return AnchorResult(
+                success=False,
+                transaction_id=None,
+                block_number=None,
+                timestamp=timestamp,
+                status=status_code,
+                channel=self.channel_name,
+                chaincode=self.chaincode_name,
+                metadata_hash=meta_hash,
+                error_message=msg
+            )
+
+        resp = self.submit_transaction(
+            "AnchorEvidence",
+            f"ANCH_{case_identifier}_{evidence_identifier}",
+            case_identifier,
+            evidence_identifier,
+            sha256,
+            event_type,
+            actor,
+            timestamp.isoformat(),
+            source,
+            meta_hash
+        )
+
+        err = resp.get("error")
+        if err:
+            return AnchorResult(
+                success=False,
+                transaction_id=None,
+                block_number=None,
+                timestamp=timestamp,
+                status="FAILED",
+                channel=self.channel_name,
+                chaincode=self.chaincode_name,
+                metadata_hash=meta_hash,
+                error_message=err
+            )
+
+        result_data = resp.get("result", {})
+        if not result_data:
+            return AnchorResult(
+                success=False,
+                transaction_id=None,
+                block_number=None,
+                timestamp=timestamp,
+                status="FAILED",
+                channel=self.channel_name,
+                chaincode=self.chaincode_name,
+                metadata_hash=meta_hash,
+                error_message="Gateway returned empty result data"
+            )
+
+        tx_id = result_data.get("transaction_id")
+        block_num_str = result_data.get("block_number")
+        block_num = int(block_num_str) if block_num_str else None
+        successful = result_data.get("successful", False)
+        
+        if not successful:
+            return AnchorResult(
+                success=False,
+                transaction_id=tx_id,
+                block_number=block_num,
+                timestamp=timestamp,
+                status="FAILED",
+                channel=self.channel_name,
+                chaincode=self.chaincode_name,
+                metadata_hash=meta_hash,
+                error_message="Transaction submitted but commit failed"
+            )
+
         return AnchorResult(
-            success=False,
-            transaction_id=None,
-            block_number=None,
+            success=True,
+            transaction_id=tx_id,
+            block_number=block_num,
             timestamp=timestamp,
-            status=status_code,
+            status="ANCHORED",
             channel=self.channel_name,
             chaincode=self.chaincode_name,
-            metadata_hash=meta_hash,
-            error_message=msg
+            metadata_hash=meta_hash
         )
 
     def anchor_custody_event(
@@ -224,21 +295,92 @@ class HyperledgerFabricProvider(BlockchainProvider):
         metadata: Dict[str, Any]
     ) -> AnchorResult:
         meta_hash = self._compute_metadata_hash(metadata)
+        health = self.health_check()
+        status_code = health.get("status", "UNAVAILABLE")
 
-        # Strictly never fabricate transaction IDs, block numbers, or synthetic ANCHORED status.
-        status_code = "UNAVAILABLE"
-        msg = "Hyperledger Fabric Gateway transaction submission is not configured for Sprint 7A. Local SHA-256 integrity and audit trail preserved."
-        logger.info(f"Fabric provider returning non-blocking {status_code} for custody event {event_identifier}")
+        if status_code != "CONNECTED":
+            msg = "Hyperledger Fabric Gateway is unavailable/offline. Local SHA-256 integrity and audit trail preserved."
+            logger.info(f"Fabric provider returning non-blocking {status_code} for custody event {event_identifier}")
+            return AnchorResult(
+                success=False,
+                transaction_id=None,
+                block_number=None,
+                timestamp=timestamp,
+                status=status_code,
+                channel=self.channel_name,
+                chaincode=self.chaincode_name,
+                metadata_hash=meta_hash,
+                error_message=msg
+            )
+
+        resp = self.submit_transaction(
+            "AnchorEvidence",
+            event_identifier,
+            case_identifier,
+            evidence_identifier,
+            sha256,
+            action,
+            actor,
+            timestamp.isoformat(),
+            "Drishtik Forensic Engine",
+            meta_hash
+        )
+
+        err = resp.get("error")
+        if err:
+            return AnchorResult(
+                success=False,
+                transaction_id=None,
+                block_number=None,
+                timestamp=timestamp,
+                status="FAILED",
+                channel=self.channel_name,
+                chaincode=self.chaincode_name,
+                metadata_hash=meta_hash,
+                error_message=err
+            )
+
+        result_data = resp.get("result", {})
+        if not result_data:
+            return AnchorResult(
+                success=False,
+                transaction_id=None,
+                block_number=None,
+                timestamp=timestamp,
+                status="FAILED",
+                channel=self.channel_name,
+                chaincode=self.chaincode_name,
+                metadata_hash=meta_hash,
+                error_message="Gateway returned empty result data"
+            )
+
+        tx_id = result_data.get("transaction_id")
+        block_num_str = result_data.get("block_number")
+        block_num = int(block_num_str) if block_num_str else None
+        successful = result_data.get("successful", False)
+        
+        if not successful:
+            return AnchorResult(
+                success=False,
+                transaction_id=tx_id,
+                block_number=block_num,
+                timestamp=timestamp,
+                status="FAILED",
+                channel=self.channel_name,
+                chaincode=self.chaincode_name,
+                metadata_hash=meta_hash,
+                error_message="Transaction submitted but commit failed"
+            )
+
         return AnchorResult(
-            success=False,
-            transaction_id=None,
-            block_number=None,
+            success=True,
+            transaction_id=tx_id,
+            block_number=block_num,
             timestamp=timestamp,
-            status=status_code,
+            status="ANCHORED",
             channel=self.channel_name,
             chaincode=self.chaincode_name,
-            metadata_hash=meta_hash,
-            error_message=msg
+            metadata_hash=meta_hash
         )
 
     def verify_anchor(
@@ -293,5 +435,13 @@ class HyperledgerFabricProvider(BlockchainProvider):
         )
 
     def get_transaction(self, transaction_id: str) -> Optional[Dict[str, Any]]:
-        # Strictly never synthesize fake COMMITTED transactions.
+        """
+        The current @hyperledger/fabric-gateway API for Node.js focuses on transaction submission and evaluation
+        from chaincode. It does not natively provide a direct GetTransactionByID method in the high-level
+        contract API without invoking the qscc (Query System Chaincode) explicitly, which requires admin privileges.
+        
+        Rather than fabricating transaction structures or returning fake data, we return None as per the
+        Sprint 7B constraints, clearly documenting that direct transaction lookup by ID is not supported
+        by the current restricted chaincode execution model.
+        """
         return None

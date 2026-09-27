@@ -8,34 +8,29 @@ import (
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
-// EvidenceAnchorContract provides functions for anchoring CCTV forensic evidence and chain of custody
 type EvidenceAnchorContract struct {
 	contractapi.Contract
 }
 
-// EvidenceAnchor describes the on-chain metadata record of forensic evidence integrity
-// Video binaries and large media are strictly NEVER stored on-chain.
 type EvidenceAnchor struct {
-	AnchorID      string `json:"anchor_id"`
-	CaseID        string `json:"case_id"`
-	EvidenceID    string `json:"evidence_id"`
-	SHA256        string `json:"sha256"`
-	EventType     string `json:"event_type"`
-	Actor         string `json:"actor"`
-	Timestamp     string `json:"timestamp"`
-	Source        string `json:"source"`
-	MetadataHash  string `json:"metadata_hash"`
-	TransactionID string `json:"transaction_id"`
-	BlockNumber   uint64 `json:"block_number"`
+	AnchorID      string  json:"anchor_id"
+	CaseID        string  json:"case_id"
+	EvidenceID    string  json:"evidence_id"
+	SHA256        string  json:"sha256"
+	EventType     string  json:"event_type"
+	Actor         string  json:"actor"
+	Timestamp     string  json:"timestamp"
+	Source        string  json:"source"
+	MetadataHash  string  json:"metadata_hash"
+	TransactionID string  json:"transaction_id"
+	BlockNumber   *uint64 json:"block_number,omitempty"
 }
 
-// InitLedger initializes the chaincode
 func (s *EvidenceAnchorContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
 	fmt.Println("Drishtik Forensic Evidence Anchor Chaincode Initialized")
 	return nil
 }
 
-// AnchorEvidence anchors an evidence SHA-256 digest and provenance record on the immutable ledger
 func (s *EvidenceAnchorContract) AnchorEvidence(
 	ctx contractapi.TransactionContextInterface,
 	anchorID string,
@@ -48,7 +43,6 @@ func (s *EvidenceAnchorContract) AnchorEvidence(
 	source string,
 	metadataHash string,
 ) (*EvidenceAnchor, error) {
-	// Validate required integrity arguments
 	if anchorID == "" || caseID == "" || evidenceID == "" || sha256 == "" {
 		return nil, fmt.Errorf("anchor_id, case_id, evidence_id, and sha256 are strictly required")
 	}
@@ -71,6 +65,7 @@ func (s *EvidenceAnchorContract) AnchorEvidence(
 		Source:        source,
 		MetadataHash:  metadataHash,
 		TransactionID: txID,
+		BlockNumber:   nil,
 	}
 
 	anchorJSON, err := json.Marshal(anchor)
@@ -78,7 +73,6 @@ func (s *EvidenceAnchorContract) AnchorEvidence(
 		return nil, fmt.Errorf("failed to serialize evidence anchor: %v", err)
 	}
 
-	// Key composite namespace: ANCHOR_{caseID}_{evidenceID}
 	key := fmt.Sprintf("ANCHOR_%s_%s", caseID, evidenceID)
 	err = ctx.GetStub().PutState(key, anchorJSON)
 	if err != nil {
@@ -88,7 +82,6 @@ func (s *EvidenceAnchorContract) AnchorEvidence(
 	return &anchor, nil
 }
 
-// GetEvidenceAnchor retrieves the anchored integrity record for a specific evidence file
 func (s *EvidenceAnchorContract) GetEvidenceAnchor(
 	ctx contractapi.TransactionContextInterface,
 	caseID string,
@@ -112,7 +105,6 @@ func (s *EvidenceAnchorContract) GetEvidenceAnchor(
 	return &anchor, nil
 }
 
-// VerifyEvidenceHash compares the on-chain recorded SHA-256 against a queried evidence hash
 func (s *EvidenceAnchorContract) VerifyEvidenceHash(
 	ctx contractapi.TransactionContextInterface,
 	caseID string,
@@ -123,11 +115,9 @@ func (s *EvidenceAnchorContract) VerifyEvidenceHash(
 	if err != nil {
 		return false, err
 	}
-
 	return anchor.SHA256 == currentSHA256, nil
 }
 
-// GetEvidenceHistory returns the complete audit history of an evidence anchor from ledger key history
 func (s *EvidenceAnchorContract) GetEvidenceHistory(
 	ctx contractapi.TransactionContextInterface,
 	caseID string,
@@ -146,7 +136,6 @@ func (s *EvidenceAnchorContract) GetEvidenceHistory(
 		if err != nil {
 			return nil, err
 		}
-
 		var record EvidenceAnchor
 		if len(response.Value) > 0 {
 			if err := json.Unmarshal(response.Value, &record); err == nil {
@@ -154,7 +143,6 @@ func (s *EvidenceAnchorContract) GetEvidenceHistory(
 			}
 		}
 	}
-
 	return records, nil
 }
 
@@ -164,7 +152,6 @@ func main() {
 		fmt.Printf("Error creating Drishtik EvidenceAnchorContract chaincode: %s", err.Error())
 		return
 	}
-
 	if err := chaincode.Start(); err != nil {
 		fmt.Printf("Error starting Drishtik EvidenceAnchorContract chaincode: %s", err.Error())
 	}
