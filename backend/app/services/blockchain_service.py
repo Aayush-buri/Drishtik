@@ -33,6 +33,14 @@ class BlockchainService:
     GENESIS_CHAIN_HASH = "0" * 64
 
     @staticmethod
+    def canonicalize_custody_timestamp(timestamp: datetime) -> str:
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        else:
+            timestamp = timestamp.astimezone(timezone.utc)
+        return timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
+    @staticmethod
     def canonicalize_custody_event(payload: Dict[str, Any]) -> str:
         return json.dumps(payload, sort_keys=True, separators=(',', ':'))
 
@@ -75,7 +83,7 @@ class BlockchainService:
         previous_hash = last_event.chain_digest if last_event and getattr(last_event, "chain_digest", None) else self.GENESIS_CHAIN_HASH
 
         event_identifier = self._generate_identifier("CUST")
-        
+
         # Determine local metadata hash
         meta_str = json.dumps(meta, sort_keys=True, separators=(",", ":"))
         metadata_hash = hashlib.sha256(meta_str.encode("utf-8")).hexdigest()
@@ -91,7 +99,7 @@ class BlockchainService:
             "metadata_hash": metadata_hash,
             "previous_event_hash": previous_hash,
             "sha256": evidence.sha256 or "",
-            "timestamp_utc": current_time.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+            "timestamp_utc": self.canonicalize_custody_timestamp(current_time)
         }
         canonical_payload = self.canonicalize_custody_event(payload)
         chain_digest = self.calculate_chain_digest(canonical_payload)
@@ -147,16 +155,32 @@ class BlockchainService:
 
         if anchor_result.success and anchor_result.status == "ANCHORED":
             # 5a. Successfully anchored
-            custody_event.blockchain_tx_id = anchor_result.transaction_id
-            custody_event.blockchain_status = "ANCHORED"
-            custody_event.blockchain_anchored_at = anchor_result.timestamp
-            custody_event.blockchain_block_number = anchor_result.block_number
-            custody_event.metadata_hash = anchor_result.metadata_hash
+            if anchor_result.metadata_hash and anchor_result.metadata_hash != metadata_hash:
+                # Metadata mismatch!
+                custody_event.blockchain_status = "FAILED"
+                # Store Audit Log
+                audit_mismatch = AuditLog(
+                    case_id=case.id,
+                    user_id=user_id,
+                    action="BLOCKCHAIN_ANCHOR_FAILED",
+                    target_identifier=evidence.evidence_identifier,
+                    details=json.dumps({
+                        "error": "Metadata hash mismatch with provider",
+                        "local_metadata_hash": metadata_hash,
+                        "provider_metadata_hash": anchor_result.metadata_hash
+                    })
+                )
+                db.add(audit_mismatch)
+            else:
+                custody_event.blockchain_tx_id = anchor_result.transaction_id
+                custody_event.blockchain_status = "ANCHORED"
+                custody_event.blockchain_anchored_at = anchor_result.timestamp
+                custody_event.blockchain_block_number = anchor_result.block_number
 
-            # Update evidence summary fields
-            evidence.blockchain_status = "ANCHORED"
-            evidence.blockchain_tx_id = anchor_result.transaction_id
-            evidence.blockchain_anchored_at = anchor_result.timestamp
+                # Update evidence summary fields
+                evidence.blockchain_status = "ANCHORED"
+                evidence.blockchain_tx_id = anchor_result.transaction_id
+                evidence.blockchain_anchored_at = anchor_result.timestamp
 
             # Store BlockchainAnchor record
             anchor_record = BlockchainAnchor(
@@ -326,9 +350,9 @@ class BlockchainService:
         query = db.query(CustodyEvent).filter(CustodyEvent.case_id == case.id)
         if evidence:
             query = query.filter(CustodyEvent.evidence_id == evidence.id)
-            
+
         events = query.order_by(CustodyEvent.timestamp.asc(), CustodyEvent.id.asc()).all()
-        
+
         if not events:
             return {
                 "verified": False,
@@ -344,7 +368,7 @@ class BlockchainService:
             }
 
         expected_previous_hash = self.GENESIS_CHAIN_HASH
-        
+
         for idx, event in enumerate(events):
             if not getattr(event, "previous_event_hash", None) or not getattr(event, "chain_digest", None):
                 return {
@@ -373,7 +397,7 @@ class BlockchainService:
                     "recorded_chain_digest": event.chain_digest,
                     "reason": f"Event {event.event_identifier} previous_event_hash does not match expected hash."
                 }
-                
+
             payload = {
                 "action": event.action,
                 "actor_id": event.actor_id,
@@ -384,11 +408,11 @@ class BlockchainService:
                 "metadata_hash": event.metadata_hash,
                 "previous_event_hash": event.previous_event_hash,
                 "sha256": event.sha256,
-                "timestamp_utc": event.timestamp.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+                "timestamp_utc": self.canonicalize_custody_timestamp(event.timestamp)
             }
             canonical_payload = self.canonicalize_custody_event(payload)
             expected_digest = self.calculate_chain_digest(canonical_payload)
-            
+
             if event.chain_digest != expected_digest:
                 return {
                     "verified": False,
@@ -402,9 +426,9 @@ class BlockchainService:
                     "recorded_chain_digest": event.chain_digest,
                     "reason": f"Event {event.event_identifier} chain_digest does not match computed payload digest."
                 }
-                
+
             expected_previous_hash = event.chain_digest
-            
+
         return {
             "verified": True,
             "status": "VERIFIED",

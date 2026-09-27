@@ -37,6 +37,15 @@ class CustodyEvent(Base):
     previous_event_hash = sa.Column(sa.String(64))
     chain_digest = sa.Column(sa.String(64))
 
+from datetime import timezone
+
+def canonicalize_custody_timestamp(timestamp) -> str:
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    else:
+        timestamp = timestamp.astimezone(timezone.utc)
+    return timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
 def canonicalize_custody_event(payload) -> str:
     return json.dumps(payload, sort_keys=True, separators=(',', ':'))
 
@@ -84,7 +93,7 @@ def upgrade() -> None:
                 "metadata_hash": event.metadata_hash,
                 "previous_event_hash": expected_previous_hash,
                 "sha256": event.sha256 or "",
-                "timestamp_utc": event.timestamp.isoformat()
+                "timestamp_utc": canonicalize_custody_timestamp(event.timestamp)
             }
             canonical_payload = canonicalize_custody_event(payload)
             digest = calculate_chain_digest(canonical_payload)
