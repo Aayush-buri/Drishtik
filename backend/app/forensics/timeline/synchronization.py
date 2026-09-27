@@ -1,7 +1,6 @@
-import math
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 from datetime import datetime, timedelta
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 try:
     import zoneinfo
 except ImportError:
@@ -18,9 +17,18 @@ class EventObservation(BaseModel):
     timestamp: datetime
     timezone: Optional[str] = None
 
+class SynchronizedObservation(BaseModel):
+    """
+    Represents an observation that has been synchronized across cameras.
+    """
+    camera_id: str
+    event_id: str
+    source_timestamp: datetime
+    synchronized_utc: datetime
+
 class CameraSyncResult(BaseModel):
     camera_id: str
-    offset_seconds: float = 0.0
+    offset_seconds: Optional[float] = None
     matched_observations_count: int = 0
     inlier_observations_count: int = 0
     residual_error: float = 0.0
@@ -30,6 +38,7 @@ class CameraSyncResult(BaseModel):
 class SynchronizationResult(BaseModel):
     reference_camera_id: str
     camera_results: Dict[str, CameraSyncResult]
+    synchronized_observations: List[SynchronizedObservation] = []
     warnings: List[str] = []
 
 def _normalize_to_utc(dt: datetime, tz_str: Optional[str]) -> datetime:
@@ -42,9 +51,9 @@ def _normalize_to_utc(dt: datetime, tz_str: Optional[str]) -> datetime:
         try:
             tz = zoneinfo.ZoneInfo(tz_str)
         except Exception:
-            tz = zoneinfo.ZoneInfo("UTC")
+            raise ValueError(f"Invalid explicitly supplied timezone: {tz_str}")
     else:
-        tz = zoneinfo.ZoneInfo("UTC")
+        raise ValueError("Naive timestamp without a supplied timezone is rejected.")
 
     return dt.replace(tzinfo=tz).astimezone(zoneinfo.ZoneInfo("UTC"))
 
@@ -75,7 +84,7 @@ def synchronize_cameras(
     events: Dict[str, Dict[str, EventObservation]] = {}
     for obs in observations:
         if not obs.camera_id or not obs.event_id:
-            warnings.append(f"Missing camera ID or event ID in observation.")
+            warnings.append("Missing camera ID or event ID in observation.")
             continue
 
         if obs.event_id not in events:
@@ -132,7 +141,7 @@ def synchronize_cameras(
                     ref_utc = _normalize_to_utc(ref_obs.timestamp, ref_obs.timezone)
                     cam_utc = _normalize_to_utc(cam_obs.timestamp, cam_obs.timezone)
                 except Exception as e:
-                    cam_warnings.append(f"Invalid timestamp data for event {evt_id}")
+                    cam_warnings.append(f"Invalid timestamp data for event {evt_id}: {str(e)}")
                     continue
 
                 # We want T_c + offset = T_ref -> offset = T_ref - T_c
@@ -143,7 +152,7 @@ def synchronize_cameras(
             cam_warnings.append("Camera has insufficient matched events with reference camera.")
             camera_results[cam_id] = CameraSyncResult(
                 camera_id=cam_id,
-                offset_seconds=0.0,
+                offset_seconds=None,
                 matched_observations_count=0,
                 inlier_observations_count=0,
                 residual_error=0.0,
@@ -173,9 +182,22 @@ def synchronize_cameras(
             cam_warnings.append("Completely inconsistent matched observations.")
             camera_results[cam_id] = CameraSyncResult(
                 camera_id=cam_id,
-                offset_seconds=0.0,
+                offset_seconds=None,
                 matched_observations_count=n,
                 inlier_observations_count=0,
+                residual_error=0.0,
+                sync_confidence=0.0,
+                warnings=cam_warnings
+            )
+            continue
+
+        if n > 1 and len(inliers) < 2:
+            cam_warnings.append("Insufficient inliers for robust estimation.")
+            camera_results[cam_id] = CameraSyncResult(
+                camera_id=cam_id,
+                offset_seconds=None,
+                matched_observations_count=n,
+                inlier_observations_count=len(inliers),
                 residual_error=0.0,
                 sync_confidence=0.0,
                 warnings=cam_warnings
@@ -201,8 +223,28 @@ def synchronize_cameras(
             warnings=cam_warnings
         )
 
+    synchronized_obs = []
+    # Process observations deterministically
+    for obs in sorted(observations, key=lambda x: (x.event_id, x.camera_id)):
+        res = camera_results.get(obs.camera_id)
+        if res and res.offset_seconds is not None:
+            try:
+                t_c_utc = _normalize_to_utc(obs.timestamp, obs.timezone)
+                t_sync = t_c_utc + timedelta(seconds=res.offset_seconds)
+                synchronized_obs.append(
+                    SynchronizedObservation(
+                        camera_id=obs.camera_id,
+                        event_id=obs.event_id,
+                        source_timestamp=obs.timestamp,
+                        synchronized_utc=t_sync
+                    )
+                )
+            except Exception:
+                pass
+
     return SynchronizationResult(
         reference_camera_id=reference_camera_id,
         camera_results=camera_results,
+        synchronized_observations=synchronized_obs,
         warnings=warnings
     )
