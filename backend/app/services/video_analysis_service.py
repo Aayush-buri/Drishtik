@@ -52,6 +52,8 @@ from app.forensics.vendor_adapter import get_best_adapter_for_file
 
 logger = logging.getLogger(__name__)
 
+from app.forensics.timeline.calibration import normalize_forensic_timeline, ClockModel, NormalizedTimestamp
+
 def normalize_timestamp(
     source_timestamp: Optional[datetime],
     calibration: Optional[TimestampCalibration]
@@ -59,15 +61,21 @@ def normalize_timestamp(
     """Applies affine drift and offset calibration to a forensic CCTV timestamp."""
     if not source_timestamp:
         return None
-    if not calibration:
-        return source_timestamp
 
-    offset = timedelta(seconds=calibration.offset_seconds)
-    if calibration.reference_timestamp is None or calibration.drift_scale == 1.0:
-        return source_timestamp + offset
+    clock_model = None
+    if calibration:
+        clock_model = ClockModel(
+            offset_seconds=calibration.offset_seconds,
+            drift_scale=calibration.drift_scale,
+            reference_timestamp=calibration.reference_timestamp,
+            source_timezone=calibration.time_zone,
+            target_timezone=calibration.time_zone, # For now, target is same as source if not provided
+            calibration_method=calibration.calibration_method,
+            calibration_reason=calibration.calibration_reason
+        )
 
-    delta = source_timestamp - calibration.reference_timestamp
-    return calibration.reference_timestamp + delta * calibration.drift_scale + offset
+    norm_result = normalize_forensic_timeline(source_timestamp, clock_model)
+    return norm_result.normalized_timestamp
 
 
 
