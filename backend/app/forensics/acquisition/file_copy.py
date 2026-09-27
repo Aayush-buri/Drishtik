@@ -83,9 +83,13 @@ class FileCopyAdapter(AcquisitionAdapter):
             destination_sha256=dest_sha256_hex,
             source_md5=source_md5_hex,
             destination_md5=dest_md5_hex,
-            size_bytes=bytes_copied,
+            size_bytes=total_bytes,
+            acquired_size_bytes=bytes_copied,
             destination_path=destination_path,
             verified=verified,
             error_message=error_msg,
-            item_count=1
+            item_count=1,
+            method="FILE_COPY",
+            source_type="FILE",
+            tool_version="Drishtik Native Copier 1.0"
         )

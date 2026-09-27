@@ -119,7 +119,7 @@ class DiskImageAdapter(FileCopyAdapter):
             info = DiskImageInfo(
                 image_format="Raw / DD Bitstream Image",
                 size_bytes=stat_before.st_size,
-                sector_size=512,
+                sector_size=None,
                 is_supported=True,
                 details="Raw uncompressed block device bitstream image"
             )
@@ -133,3 +133,23 @@ class DiskImageAdapter(FileCopyAdapter):
             status=DiskImageInspectionStatus.UNSUPPORTED,
             message="Input is neither a supported disk image nor an E01 candidate."
         )
+
+    def acquire(
+        self,
+        destination_dir: Path,
+        progress_callback: Optional[Callable[[int], None]] = None
+    ) -> AcquisitionResult:
+        result = super().acquire(destination_dir, progress_callback)
+        inspection = self.inspect_image()
+        
+        is_e01 = self.source_path.suffix.lower() == ".e01"
+        result.method = "E01_IMAGE" if is_e01 else "RAW_IMAGE"
+        result.source_type = "IMAGE"
+        
+        if inspection.info:
+            result.sector_size = inspection.info.sector_size
+            
+        if inspection.status == DiskImageInspectionStatus.DETECTED_BUT_UNAVAILABLE:
+            result.error_message = inspection.message
+            
+        return result

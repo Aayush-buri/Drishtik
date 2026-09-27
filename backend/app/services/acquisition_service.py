@@ -171,6 +171,16 @@ def execute_acquisition(
                 acquisition.source_md5 = result.source_md5
                 acquisition.destination_md5 = result.destination_md5
                 acquisition.size_bytes = result.size_bytes
+                acquisition.acquired_size_bytes = getattr(result, "acquired_size_bytes", None)
+                acquisition.sector_size = getattr(result, "sector_size", None)
+                acquisition.tool_version = getattr(result, "tool_version", None)
+                if getattr(result, "method", None):
+                    acquisition.acquisition_method = result.method
+                acquisition.vendor = getattr(result, "vendor", None)
+                acquisition.device_model = getattr(result, "device_model", None)
+                acquisition.source_filesystem = getattr(result, "source_filesystem", None)
+                acquisition.source_type = getattr(result, "source_type", None)
+                acquisition.hash_algorithm = "SHA-256"
                 acquisition.destination_reference = str(
                     result.destination_path.relative_to(Path("data") / "case_data" / case.case_identifier)
                 ).replace("\\", "/")
@@ -198,6 +208,9 @@ def execute_acquisition(
                         "sha256": result.destination_sha256,
                         "md5": result.destination_md5,
                         "size_bytes": result.size_bytes,
+                        "acquired_size_bytes": getattr(result, "acquired_size_bytes", None),
+                        "method": getattr(acquisition, "acquisition_method", None),
+                        "status": "COMPLETED",
                         "verified": True,
                         "capture_type": "NETWORK_LIVE_PULL",
                     }),
@@ -220,6 +233,8 @@ def execute_acquisition(
                     details=json.dumps({
                         "acquisition_identifier": acq_ident,
                         "device_identifier": device.device_identifier,
+                        "method": getattr(acquisition, "acquisition_method", None),
+                        "status": "FAILED",
                         "error": acquisition.error_message,
                     }),
                 )
@@ -239,6 +254,8 @@ def execute_acquisition(
                 details=json.dumps({
                     "acquisition_identifier": acq_ident,
                     "device_identifier": device.device_identifier,
+                    "method": getattr(acquisition, "acquisition_method", None),
+                    "status": "FAILED",
                     "error": str(e),
                 }),
             )
@@ -367,6 +384,16 @@ def execute_acquisition(
             acquisition.source_md5 = result.source_md5
             acquisition.destination_md5 = result.destination_md5
             acquisition.size_bytes = result.size_bytes
+            acquisition.acquired_size_bytes = getattr(result, "acquired_size_bytes", None)
+            acquisition.sector_size = getattr(result, "sector_size", None)
+            acquisition.tool_version = getattr(result, "tool_version", None)
+            if getattr(result, "method", None):
+                acquisition.acquisition_method = result.method
+            acquisition.vendor = getattr(result, "vendor", None)
+            acquisition.device_model = getattr(result, "device_model", None)
+            acquisition.source_filesystem = getattr(result, "source_filesystem", None)
+            acquisition.source_type = getattr(result, "source_type", None)
+            acquisition.hash_algorithm = "SHA-256"
             acquisition.destination_reference = str(result.destination_path.relative_to(Path("data") / "case_data" / case.case_identifier)).replace("\\", "/")
             acquisition.completed_at = datetime.now(timezone.utc)
             acquisition.error_message = None
@@ -388,6 +415,9 @@ def execute_acquisition(
                     "sha256": result.destination_sha256,
                     "md5": result.destination_md5,
                     "size_bytes": result.size_bytes,
+                    "acquired_size_bytes": getattr(result, "acquired_size_bytes", None),
+                    "method": getattr(acquisition, "acquisition_method", None),
+                    "status": "COMPLETED",
                     "verified": True
                 })
             )
@@ -412,6 +442,8 @@ def execute_acquisition(
                 details=json.dumps({
                     "acquisition_identifier": acq_ident,
                     "device_identifier": device.device_identifier,
+                    "method": getattr(acquisition, "acquisition_method", None),
+                    "status": "FAILED",
                     "error": acquisition.error_message
                 })
             )
@@ -432,6 +464,8 @@ def execute_acquisition(
             details=json.dumps({
                 "acquisition_identifier": acq_ident,
                 "device_identifier": device.device_identifier,
+                "method": getattr(acquisition, "acquisition_method", None),
+                "status": "FAILED",
                 "error": str(e)
             })
         )

@@ -120,9 +120,13 @@ class DirectoryCopyAdapter(AcquisitionAdapter):
             destination_sha256=dest_sha256_hex,
             source_md5=source_md5_hex,
             destination_md5=dest_md5_hex,
-            size_bytes=bytes_copied,
+            size_bytes=total_bytes,
+            acquired_size_bytes=bytes_copied,
             destination_path=destination_dir,
             verified=verified,
             error_message=error_msg,
-            item_count=len(files)
+            item_count=len(files),
+            method="DIRECTORY_COPY",
+            source_type="DIRECTORY",
+            tool_version="Drishtik Native Copier 1.0"
         )

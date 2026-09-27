@@ -17,7 +17,7 @@ def test_raw_image_inspection(tmp_path: Path):
     assert result.info is not None
     assert result.info.image_format == "Raw / DD Bitstream Image"
     assert result.info.size_bytes == 1024
-    assert result.info.sector_size == 512
+    assert result.info.sector_size is None
 
 def test_e01_signature_detection_unavailable(tmp_path: Path):
     """B & C. E01 signature detection works; inspection capability unavailable.
@@ -113,7 +113,7 @@ def test_integration_disk_image_supported(tmp_path: Path, db_session):
             source_md5="123",
             destination_md5="123",
             size_bytes=8,
-            destination_path=Path("data") / "case_data" / case.case_identifier / "acq" / "dest.raw"
+            destination_path=Path("data") / "case_data" / case.case_identifier / "acq" / "dest.raw", method=AcquisitionMethod.DISK_IMAGE, sector_size=512, acquired_size_bytes=8, tool_version="Test", vendor=None, device_model=None, source_filesystem=None, source_type="IMAGE"
         )
         mock_get_adapter.return_value = mock_adapter
 

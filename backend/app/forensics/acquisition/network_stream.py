@@ -452,15 +452,21 @@ class NetworkStreamAdapter(AcquisitionAdapter):
             progress_callback(100)
 
         return AcquisitionResult(
-            source_sha256=source_sha256_hex,
+            source_sha256=None,  # Not applicable for live pull
             destination_sha256=dest_sha256_hex,
-            source_md5=source_md5_hex,
+            source_md5=None,     # Not applicable for live pull
             destination_md5=dest_md5_hex,
-            size_bytes=bytes_written,
+            size_bytes=None,
+            acquired_size_bytes=bytes_written,
             destination_path=destination_path,
             verified=verified,
-            error_message=None if verified else "Hash mismatch between received stream and written file.",
+            error_message="non-transcoding RTSP live acquisition; byte-for-byte source comparison not applicable",
             item_count=1,
+            method="NETWORK_LIVE_PULL",
+            source_type="RTSP_STREAM",
+            vendor=self._connection_info.device_manufacturer if self._connection_info else None,
+            device_model=self._connection_info.device_model if self._connection_info else None,
+            tool_version="Drishtik Live FFmpeg-based Pull"
         )
 
     def get_device_clock_offset(self) -> Optional[timedelta]:
@@ -491,14 +497,16 @@ def connect_multiple(
                 results[label] = future.result()
             except Exception as exc:
                 results[label] = AcquisitionResult(
-                    source_sha256="",
+                    source_sha256=None,
                     destination_sha256="",
-                    source_md5="",
+                    source_md5=None,
                     destination_md5="",
-                    size_bytes=0,
+                    size_bytes=None,
+                    acquired_size_bytes=0,
                     destination_path=destination_root / label,
                     verified=False,
                     error_message=str(exc),
                     item_count=0,
+                    method="NETWORK_LIVE_PULL"
                 )
     return results

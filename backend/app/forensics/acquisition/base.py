@@ -5,15 +5,24 @@ from typing import Optional, Callable
 
 @dataclass
 class AcquisitionResult:
-    source_sha256: str
+    source_sha256: Optional[str]
     destination_sha256: str
-    source_md5: str
+    source_md5: Optional[str]
     destination_md5: str
-    size_bytes: int
+    size_bytes: Optional[int]
+    acquired_size_bytes: Optional[int]
     destination_path: Path
     verified: bool
     error_message: Optional[str] = None
     item_count: int = 1
+    sector_size: Optional[int] = None
+    tool_version: Optional[str] = None
+    method: Optional[str] = None
+    vendor: Optional[str] = None
+    device_model: Optional[str] = None
+    source_filesystem: Optional[str] = None
+    source_type: Optional[str] = None
+
 
 class AcquisitionAdapter(ABC):
     """Abstract base class for all forensic acquisition adapters."""

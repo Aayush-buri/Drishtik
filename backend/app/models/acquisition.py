@@ -8,9 +8,12 @@ class AcquisitionMethod(str, enum.Enum):
     FILE_COPY = "FILE_COPY"
     DIRECTORY_COPY = "DIRECTORY_COPY"
     DISK_IMAGE = "DISK_IMAGE"
+    RAW_IMAGE = "RAW_IMAGE"
+    E01_IMAGE = "E01_IMAGE"
     EXPORTED_VIDEO = "EXPORTED_VIDEO"
     LOGICAL_ACQUISITION = "LOGICAL_ACQUISITION"
     NETWORK_LIVE_PULL = "NETWORK_LIVE_PULL"
+    UNSUPPORTED = "UNSUPPORTED"
     OTHER = "OTHER"
 
 class AcquisitionStatus(str, enum.Enum):
@@ -46,6 +49,16 @@ class Acquisition(Base):
     destination_md5 = Column(String(32), nullable=True)
 
     size_bytes = Column(BigInteger, nullable=True)
+    acquired_size_bytes = Column(BigInteger, nullable=True)
+    sector_size = Column(Integer, nullable=True)
+    
+    source_type = Column(String(50), nullable=True)
+    vendor = Column(String(100), nullable=True)
+    device_model = Column(String(100), nullable=True)
+    source_filesystem = Column(String(100), nullable=True)
+    
+    hash_algorithm = Column(String(20), default="SHA-256")
+    tool_version = Column(String(100), nullable=True)
     notes = Column(String(2000), nullable=True)
     error_message = Column(String(2000), nullable=True)
 
