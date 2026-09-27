@@ -128,21 +128,39 @@ async function start() {
                 }
                 
                 const { transactionName, transactionArgs } = args;
-                try {
-                    if (method === 'evaluate') {
+                if (method === 'evaluate') {
+                    try {
                         const resultBytes = await contract.evaluateTransaction(transactionName, ...transactionArgs);
                         const resultStr = Buffer.from(resultBytes).toString('utf8');
                         console.log(JSON.stringify({ id, error: null, result: resultStr ? JSON.parse(resultStr) : null }));
-                    } else {
-                        // For sprint 7B: real submission with commit wait
-                        const commit = await contract.submitAsync(transactionName, { arguments: transactionArgs });
+                    } catch (err) {
+                        let errMsg = err.message;
+                        if (err.details && err.details.length > 0) {
+                            errMsg += ' ' + err.details.map(d => d.message).join(', ');
+                        }
+                        console.log(JSON.stringify({ id, error: errMsg, result: null }));
+                    }
+                } else {
+                    // For sprint 7B: real submission with commit wait
+                    let commit;
+                    try {
+                        commit = await contract.submitAsync(transactionName, { arguments: transactionArgs });
+                    } catch (err) {
+                        let errMsg = err.message;
+                        if (err.details && err.details.length > 0) {
+                            errMsg += ' ' + err.details.map(d => d.message).join(', ');
+                        }
+                        console.log(JSON.stringify({ id, error: errMsg, result: null }));
+                        return;
+                    }
+                    
+                    const transactionId = commit.getTransactionId();
+                    const resultBytes = commit.getResult();
+                    const resultStr = Buffer.from(resultBytes).toString('utf8');
+                    const parsedResult = resultStr ? JSON.parse(resultStr) : null;
+                    
+                    try {
                         const status = await commit.getStatus();
-                        const resultBytes = commit.getResult();
-                        const transactionId = commit.getTransactionId();
-                        
-                        const resultStr = Buffer.from(resultBytes).toString('utf8');
-                        const parsedResult = resultStr ? JSON.parse(resultStr) : null;
-                        
                         console.log(JSON.stringify({ 
                             id, 
                             error: null, 
@@ -153,13 +171,22 @@ async function start() {
                                 successful: status.successful
                             }
                         }));
+                    } catch (statusErr) {
+                        let errMsg = statusErr.message;
+                        if (statusErr.details && statusErr.details.length > 0) {
+                            errMsg += ' ' + statusErr.details.map(d => d.message).join(', ');
+                        }
+                        console.log(JSON.stringify({ 
+                            id, 
+                            error: errMsg, 
+                            result: {
+                                payload: parsedResult,
+                                transaction_id: transactionId,
+                                block_number: null,
+                                successful: false
+                            }
+                        }));
                     }
-                } catch (err) {
-                    let errMsg = err.message;
-                    if (err.details && err.details.length > 0) {
-                        errMsg += ' ' + err.details.map(d => d.message).join(', ');
-                    }
-                    console.log(JSON.stringify({ id, error: errMsg, result: null }));
                 }
             } else {
                 console.log(JSON.stringify({ id, error: 'Unknown method', result: null }));

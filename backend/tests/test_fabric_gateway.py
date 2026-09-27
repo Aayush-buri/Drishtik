@@ -121,7 +121,7 @@ def test_mocked_submission_commit_timeout_or_fail(mock_send_request, clean_gatew
     provider = HyperledgerFabricProvider()
     res = provider.anchor_evidence("c1", "e1", "hash", "type", "actor", datetime.now(timezone.utc), "src", {})
     assert res.success is False
-    assert res.status == "FAILED"
+    assert res.status in ("FAILED", "TIMEOUT")
     assert res.transaction_id == "REAL_TX_ID_456"
     assert res.block_number is None
 

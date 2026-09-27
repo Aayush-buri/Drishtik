@@ -3,7 +3,7 @@
 ## Architecture & Purpose
 Drishtik utilizes Hyperledger Fabric as an enterprise permissioned ledger for **cryptographic integrity anchoring** and **chain-of-custody verification**.
 
-## Current Architecture (Sprint 7A)
+## Current Architecture (Sprint 7B)
 
 `	ext
 FastAPI Python backend
@@ -14,35 +14,33 @@ Node.js Fabric Gateway Worker
         |
         | @hyperledger/fabric-gateway
         v
-Hyperledger Fabric peer/gateway
+submitAsync(...)
         |
         v
-Fabric channel + chaincode
+Fabric endorsement/orderer/commit
+        |
+        v
+real transaction ID
+        |
+        v
+commit confirmation
+        |
+        v
+ledger verification
 `
 
-### Current verified capability after Sprint 7A
+### Current verified capability after Sprint 7B
 
-* real Node.js Fabric Gateway client foundation
-* configurable Fabric identity
-* configurable certificate/private-key paths
-* configurable MSP/channel/chaincode/endpoint
-* real Gateway connectivity/health when correctly configured
-* real read-only GetEvidenceAnchor evaluation when configured
-* deterministic NOT_CONFIGURED / UNAVAILABLE / ERROR behavior
-* offline forensic operations continue
-* no fabricated transaction IDs
-* no fabricated block numbers
-* no fabricated ANCHORED or VERIFIED ledger states
-
-### What is NOT complete yet
-
-Sprint 7A does **not** yet provide:
-
-* end-to-end real transaction submission from the forensic custody workflow
-* real commit-event confirmation integrated into custody processing
-* application-level block-number confirmation for submitted evidence
-* complete live ledger verification in every production workflow
-* multi-organization Fabric governance
+* real Fabric Gateway connection
+* real \submitAsync()\ transaction submission
+* real transaction ID
+* real commit-status confirmation
+* real block number when supplied by commit status
+* real ledger verification through \GetEvidenceAnchor\
+* no fabricated transaction/block metadata
+* offline fallback
+* \get_transaction()\ remains unsupported unless a genuine ledger transaction query mechanism is added
+* multi-organization Fabric governance remains future work
 
 ## Identity and Security Handling
 
@@ -56,12 +54,12 @@ Sprint 7A does **not** yet provide:
 
 ## Local Development Network Setup
 
-A single-machine development topology is defined in lockchain/docker-compose.fabric.yml:
+A single-machine development topology is defined in  lockchain/docker-compose.fabric.yml:
 - **CA (Certificate Authority)**: ca.org1.example.com on port 7054
 - **Orderer**: orderer.example.com on port 7050
 - **Peer**: peer0.org1.example.com on port 7051
 - **Channel**: cctvchannel
-- **Chaincode**: vidence_anchor
+- **Chaincode**: idence_anchor
 
 ### Prerequisites:
 1. Docker Desktop with Compose V2.

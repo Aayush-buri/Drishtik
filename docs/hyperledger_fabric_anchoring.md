@@ -2,21 +2,20 @@
 
 Drishtik utilizes Hyperledger Fabric as an enterprise permissioned ledger for **cryptographic integrity anchoring** and **chain-of-custody verification**.
 
-## Current verified capability after Sprint 7A
+## Current verified capability after Sprint 7B
 
 The system implements a true Node.js-based Fabric Gateway architecture:
 
-* real Node.js Fabric Gateway client foundation
-* configurable Fabric identity
-* configurable certificate/private-key paths
-* configurable MSP/channel/chaincode/endpoint
-* real Gateway connectivity/health when correctly configured
-* real read-only GetEvidenceAnchor evaluation when configured
-* deterministic NOT_CONFIGURED / UNAVAILABLE / ERROR behavior
-* offline forensic operations continue
-* no fabricated transaction IDs
-* no fabricated block numbers
-* no fabricated ANCHORED or VERIFIED ledger states
+* real Fabric Gateway connection
+* real \submitAsync()\ transaction submission
+* real transaction ID
+* real commit-status confirmation
+* real block number when supplied by commit status
+* real ledger verification through \GetEvidenceAnchor\
+* no fabricated transaction/block metadata
+* offline fallback
+* \get_transaction()\ remains unsupported unless a genuine ledger transaction query mechanism is added
+* multi-organization Fabric governance remains future work
 
 ### Architecture
 
@@ -29,23 +28,20 @@ Node.js Fabric Gateway Worker
         |
         | @hyperledger/fabric-gateway
         v
-Hyperledger Fabric peer/gateway
+submitAsync(...)
         |
         v
-Fabric channel + chaincode
+Fabric endorsement/orderer/commit
+        |
+        v
+real transaction ID
+        |
+        v
+commit confirmation
+        |
+        v
+ledger verification
 `
-
-## What is NOT complete yet
-
-Sprint 7A does **not** yet provide:
-
-* end-to-end real transaction submission from the forensic custody workflow
-* real commit-event confirmation integrated into custody processing
-* application-level block-number confirmation for submitted evidence
-* complete live ledger verification in every production workflow
-* multi-organization Fabric governance
-
-These belong to Sprint 7B and later bounded work. The system is not fully blockchain-integrated yet.
 
 ## Identity and Security Handling
 
