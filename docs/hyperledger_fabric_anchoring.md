@@ -7,19 +7,19 @@ Drishtik utilizes Hyperledger Fabric as an enterprise permissioned ledger for **
 The system implements a true Node.js-based Fabric Gateway architecture:
 
 * real Fabric Gateway connection
-* real \submitAsync()\ transaction submission
+* real `submitAsync()` transaction submission
 * real transaction ID
 * real commit-status confirmation
 * real block number when supplied by commit status
-* real ledger verification through \GetEvidenceAnchor\
+* real ledger verification through `GetEvidenceAnchor`
 * no fabricated transaction/block metadata
 * offline fallback
-* \get_transaction()\ remains unsupported unless a genuine ledger transaction query mechanism is added
+* `get_transaction()` remains unsupported unless a genuine ledger transaction query mechanism is added
 * multi-organization Fabric governance remains future work
 
 ### Architecture
 
-`	ext
+```text
 FastAPI Python backend
         |
         | subprocess + JSON-RPC over stdin/stdout
@@ -41,7 +41,7 @@ commit confirmation
         |
         v
 ledger verification
-`
+```
 
 ## Identity and Security Handling
 

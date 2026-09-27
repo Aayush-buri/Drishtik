@@ -13,17 +13,17 @@ type EvidenceAnchorContract struct {
 }
 
 type EvidenceAnchor struct {
-	AnchorID      string  json:"anchor_id"
-	CaseID        string  json:"case_id"
-	EvidenceID    string  json:"evidence_id"
-	SHA256        string  json:"sha256"
-	EventType     string  json:"event_type"
-	Actor         string  json:"actor"
-	Timestamp     string  json:"timestamp"
-	Source        string  json:"source"
-	MetadataHash  string  json:"metadata_hash"
-	TransactionID string  json:"transaction_id"
-	BlockNumber   *uint64 json:"block_number,omitempty"
+	AnchorID      string  `json:"anchor_id"`
+	CaseID        string  `json:"case_id"`
+	EvidenceID    string  `json:"evidence_id"`
+	SHA256        string  `json:"sha256"`
+	EventType     string  `json:"event_type"`
+	Actor         string  `json:"actor"`
+	Timestamp     string  `json:"timestamp"`
+	Source        string  `json:"source"`
+	MetadataHash  string  `json:"metadata_hash"`
+	TransactionID string  `json:"transaction_id"`
+	BlockNumber   *uint64 `json:"block_number,omitempty"`
 }
 
 func (s *EvidenceAnchorContract) InitLedger(ctx contractapi.TransactionContextInterface) error {

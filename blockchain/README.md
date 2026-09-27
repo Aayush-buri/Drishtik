@@ -5,7 +5,7 @@ Drishtik utilizes Hyperledger Fabric as an enterprise permissioned ledger for **
 
 ## Current Architecture (Sprint 7B)
 
-`	ext
+```text
 FastAPI Python backend
         |
         | subprocess + JSON-RPC over stdin/stdout
@@ -27,19 +27,19 @@ commit confirmation
         |
         v
 ledger verification
-`
+```
 
 ### Current verified capability after Sprint 7B
 
 * real Fabric Gateway connection
-* real \submitAsync()\ transaction submission
+* real `submitAsync()` transaction submission
 * real transaction ID
 * real commit-status confirmation
 * real block number when supplied by commit status
-* real ledger verification through \GetEvidenceAnchor\
+* real ledger verification through `GetEvidenceAnchor`
 * no fabricated transaction/block metadata
 * offline fallback
-* \get_transaction()\ remains unsupported unless a genuine ledger transaction query mechanism is added
+* `get_transaction()` remains unsupported unless a genuine ledger transaction query mechanism is added
 * multi-organization Fabric governance remains future work
 
 ## Identity and Security Handling
@@ -54,12 +54,12 @@ ledger verification
 
 ## Local Development Network Setup
 
-A single-machine development topology is defined in  lockchain/docker-compose.fabric.yml:
+A single-machine development topology is defined in `blockchain/docker-compose.fabric.yml`:
 - **CA (Certificate Authority)**: ca.org1.example.com on port 7054
 - **Orderer**: orderer.example.com on port 7050
 - **Peer**: peer0.org1.example.com on port 7051
 - **Channel**: cctvchannel
-- **Chaincode**: idence_anchor
+- **Chaincode**: `evidence_anchor`
 
 ### Prerequisites:
 1. Docker Desktop with Compose V2.
@@ -67,17 +67,17 @@ A single-machine development topology is defined in  lockchain/docker-compose.fa
 3. Node.js (for Gateway Adapter).
 
 ### Starting the Local Fabric Network:
-`ash
+```bash
 cd blockchain
 docker compose -f docker-compose.fabric.yml up -d
-`
+```
 
 ### Deploying the Chaincode:
-`ash
+```bash
 # Package and install the chaincode on peer0.org1
 peer lifecycle chaincode package evidence_anchor.tar.gz --path ./chaincode --lang golang --label evidence_anchor_1.0
 peer lifecycle chaincode install evidence_anchor.tar.gz
-`
+```
 
 ---
 
