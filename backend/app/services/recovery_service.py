@@ -224,6 +224,9 @@ def recover_candidate(
     if not cand:
         raise HTTPException(status_code=404, detail="Recovery candidate not found")
 
+    if cand.status == RecoveryCandidateStatus.CORRUPTED:
+        raise HTTPException(status_code=400, detail="Cannot recover structurally corrupted candidates")
+
     if cand.status == RecoveryCandidateStatus.RECOVERED and cand.recovered_evidence_id:
         existing = db.query(Evidence).filter(Evidence.id == cand.recovered_evidence_id).first()
         if existing:

@@ -394,25 +394,26 @@ def test_13_recovery_foundation_disk_image_identification(tmp_path: Path):
     assert "Expert Witness" in info_e01.image_format or "E01" in info_e01.image_format
 
 
-def test_14_recovery_carving_candidates_detection():
+def test_14_recovery_carving_candidates_detection(tmp_path):
     """14. Carving strategies detect proprietary CCTV candidates in unallocated stream buffer."""
     dhav_strategy = DhavCarvingStrategy()
     hik_strategy = HikvisionCarvingStrategy()
 
-    # Synthetic unallocated cluster buffer with embedded CCTV streams
     cluster_buffer = (
         b"\x00" * 1024 +
         b"DHAV\xfd\x00\x00\x00\x20\x00\x00\x00" + b"\xaa" * 32 +
         b"\x00" * 512 +
         b"HIKV\x01\x00\x00\x00\x00\x00\x00\x00" + b"\xbb" * 32
     )
+    fpath = tmp_path / "cluster.raw"
+    fpath.write_bytes(cluster_buffer)
 
-    dhav_candidates = list(dhav_strategy.carve_candidates(cluster_buffer))
+    dhav_candidates = list(dhav_strategy.carve(fpath, len(cluster_buffer)))
     assert len(dhav_candidates) >= 1
     assert dhav_candidates[0].detected_vendor == "Dahua"
     assert dhav_candidates[0].offset_bytes == 1024
 
-    hik_candidates = list(hik_strategy.carve_candidates(cluster_buffer))
+    hik_candidates = list(hik_strategy.carve(fpath, len(cluster_buffer)))
     assert len(hik_candidates) >= 1
     assert hik_candidates[0].detected_vendor == "Hikvision"
     assert hik_candidates[0].offset_bytes == 1580

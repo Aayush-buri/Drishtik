@@ -1,4 +1,6 @@
-"""Forensic recovery engine for signature carving and structural validation."""
+import sys
+
+engine_code = '''"""Forensic recovery engine for signature carving and structural validation."""
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -17,7 +19,6 @@ class DiskImageInfo:
     image_format: str
     size_bytes: int
     is_supported: bool
-    sector_size: Optional[int] = None
     details: str = ""
 
 
@@ -104,10 +105,8 @@ class DhavCarvingStrategy(CarvingStrategy):
                         if not reader.read_more():
                             break
                     if reader.size < 24:
-                        if frames > 0 and reader.size > 0:
+                        if frames > 0:
                             status = "PARTIAL"
-                        if frames == 0:
-                            reader.advance(reader.size)
                         break
                     
                     data = reader.data
@@ -219,7 +218,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                         break
 
                 pos_hikv = reader.find(b"HIKV")
-                pos_ps = reader.find(b"\x00\x00\x01\xba")
+                pos_ps = reader.find(b"\\x00\\x00\\x01\\xba")
                 
                 # find earliest
                 pos = -1
@@ -277,12 +276,11 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                             if not reader.read_more():
                                 break
                         if reader.size < 14:
-                            if frames > 0 and reader.size > 0: status = "PARTIAL"
-                            if frames == 0: reader.advance(reader.size)
+                            if frames > 0: status = "PARTIAL"
                             break
                             
                         data = reader.data
-                        if data[0:4] != b"\x00\x00\x01\xba":
+                        if data[0:4] != b"\\x00\\x00\\x01\\xba":
                             break
                             
                         # Pack header is 14 bytes usually, then PES follows
@@ -303,7 +301,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                             break
                             
                         data = reader.data
-                        if data[pack_len:pack_len+3] != b"\x00\x00\x01":
+                        if data[pack_len:pack_len+3] != b"\\x00\\x00\\x01":
                             # End of contiguous MPEG-PS
                             # Or maybe a system header?
                             pass
@@ -318,14 +316,14 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                         if pes_len == 0:
                             # unbounded video PES (e.g. video)
                             # must find next pack header
-                            next_ba = reader.find(b"\x00\x00\x01\xba", pes_start+4)
+                            next_ba = reader.find(b"\\x00\\x00\\x01\\xba", pes_start+4)
                             if next_ba != -1:
                                 frame_len = next_ba
                             else:
                                 # We need to read more until we find it or EOF
                                 found_next = False
                                 while reader.read_more():
-                                    next_ba = reader.find(b"\x00\x00\x01\xba", pes_start+4)
+                                    next_ba = reader.find(b"\\x00\\x00\\x01\\xba", pes_start+4)
                                     if next_ba != -1:
                                         frame_len = next_ba
                                         found_next = True
@@ -402,7 +400,6 @@ class Mp4FtypCarvingStrategy(CarvingStrategy):
                             if not reader.read_more():
                                 break
                         if reader.size < 8:
-                            if current_cand_len == 0: reader.advance(reader.size)
                             break
                             
                         box_size = int.from_bytes(reader.data[0:4], "big")
@@ -561,7 +558,7 @@ class RecoveryEngine:
                     return {"status": "CORRUPTED", "details": "Missing DHAV magic bytes at offset", "confidence": 0.0}
 
                 has_second_dhav = sample.find(b"DHAV", 4) != -1
-                has_annex_b = b"\x00\x00\x00\x01" in sample or b"\x00\x00\x01" in sample
+                has_annex_b = b"\\x00\\x00\\x00\\x01" in sample or b"\\x00\\x00\\x01" in sample
                 
                 if length_bytes < 24:
                     return {"status": "CORRUPTED", "details": "DHAV header present but payload data is severely truncated", "confidence": 0.30}
@@ -571,19 +568,19 @@ class RecoveryEngine:
                     return {"status": "CORRUPTED", "details": "Invalid DHAV payload size", "confidence": 0.30}
 
                 # If the length is equal to exactly what we carved, it means we reached the structural end!
-                if (has_annex_b and has_second_dhav) or length_bytes == 24 + payload_size:
-                    return {"status": "VALID", "details": f"Confirmed Dahua DHAV stream/frame ({length_bytes} bytes)", "confidence": 0.95}
-                elif has_annex_b or has_second_dhav:
+                if has_annex_b and has_second_dhav:
+                    return {"status": "VALID", "details": f"Confirmed multi-frame Dahua DHAV stream ({length_bytes} bytes)", "confidence": 0.95}
+                elif has_annex_b or has_second_dhav or length_bytes == 24 + payload_size:
                     return {"status": "PARTIAL", "details": f"Isolated Dahua DHAV frame fragment detected ({length_bytes} bytes)", "confidence": 0.75}
                 else:
                     return {"status": "CORRUPTED", "details": "DHAV header present but payload data is truncated or corrupt", "confidence": 0.30}
 
             # 2. Hikvision
-            if "Hikvision" in detected_format or sample.startswith(b"HIKV") or sample.startswith(b"\x00\x00\x01\xba"):
+            if "Hikvision" in detected_format or sample.startswith(b"HIKV") or sample.startswith(b"\\x00\\x00\\x01\\xba"):
                 if sample.startswith(b"HIKV"):
                     return {"status": "PARTIAL", "details": "Hikvision HIKV header fragment detected", "confidence": 0.70}
-                elif sample.startswith(b"\x00\x00\x01\xba"):
-                    has_pes = b"\x00\x00\x01\xe0" in sample or b"\x00\x00\x01\xc0" in sample
+                elif sample.startswith(b"\\x00\\x00\\x01\\xba"):
+                    has_pes = b"\\x00\\x00\\x01\\xe0" in sample or b"\\x00\\x00\\x01\\xc0" in sample
                     if has_pes and length_bytes > 32:
                         return {"status": "VALID", "details": f"Confirmed MPEG-PS stream ({length_bytes} bytes)", "confidence": 0.90}
                     return {"status": "PARTIAL", "details": "MPEG-PS Pack Header detected without complete PES payload", "confidence": 0.65}
@@ -638,3 +635,7 @@ class RecoveryEngine:
                 remaining -= len(buf)
 
         return written
+'''
+
+with open('backend/app/forensics/recovery/engine.py', 'w', encoding='utf-8') as f:
+    f.write(engine_code.replace("\\\\", "\\"))

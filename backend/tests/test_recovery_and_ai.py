@@ -152,7 +152,7 @@ def create_synthetic_raw_image(tmp_path) -> str:
     
     # Embedded Dahua DHAV stream with NAL start code and trailing DHAV block
     dhav_magic = b"DHAV"
-    dhav_body = b"\x01\x00\x00\x00" + b"\x00\x00\x00\x01\x67" + b"\x55" * 1024 + b"DHAV" + b"\x22" * 512
+    dhav_body = b"\xFD\x00\x00\x00" + b"\x64\x00\x00\x00" + b"\x00" * 12 + b"\x55" * 100
     
     # Gap unallocated space
     padding2 = b"\xFF" * 1024
@@ -249,15 +249,15 @@ def test_4_candidate_validation(tmp_path):
     
     # Complete DHAV candidate
     valid_dhav_file = tmp_path / "valid_dhav.raw"
-    valid_dhav_file.write_bytes(b"DHAV" + b"\x01\x00\x00\x00" + b"\x00\x00\x00\x01\x67" + b"\x55" * 100 + b"DHAV" + b"\x00" * 50)
-    val_v = engine.validate_candidate_stream(valid_dhav_file, 0, 200, "DHAV")
+    valid_dhav_file.write_bytes(b"DHAV" + b"\xFD\x00\x00\x00" + b"\x64\x00\x00\x00" + b"\x00" * 12 + b"\x55" * 100)
+    val_v = engine.validate_candidate_stream(valid_dhav_file, 0, 124, "DHAV")
     assert val_v["status"] == "VALID"
     assert val_v["confidence"] >= 0.85
 
     # Partial / truncated DHAV
     truncated_dhav_file = tmp_path / "trunc_dhav.raw"
-    truncated_dhav_file.write_bytes(b"DHAV" + b"\x01\x00\x00\x00" + b"\x00\x00\x00\x01\x67")
-    val_p = engine.validate_candidate_stream(truncated_dhav_file, 0, 50, "DHAV")
+    truncated_dhav_file.write_bytes(b"DHAV" + b"\xFD\x00\x00\x00" + b"\x64\x00\x00\x00" + b"\x00" * 12 + b"\x55" * 20)
+    val_p = engine.validate_candidate_stream(truncated_dhav_file, 0, 44, "DHAV")
     assert val_p["status"] == "PARTIAL"
 
     # Corrupted candidate (no magic bytes)
@@ -329,7 +329,7 @@ def test_5_to_9_recovery_workflow_and_immutability(tmp_path, db_session: Session
 def test_10_fragmented_corrupt_candidate_handling(tmp_path, db_session: Session, case_with_members: Case, test_admin_user: User):
     """10. Fragmented / corrupted stream handling."""
     frag_path = tmp_path / "frag_image.raw"
-    frag_path.write_bytes(b"\x00" * 128 + b"DHAV\x00\x00")
+    frag_path.write_bytes(b"\x00" * 128 + b"DHAV" + b"\xFD\x00\x00\x00" + b"\x64\x00\x00\x00" + b"\x00" * 12 + b"\x55" * 20)
     
     ev = Evidence(
         case_id=case_with_members.id,
