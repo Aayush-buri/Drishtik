@@ -89,6 +89,42 @@ def enrich_acquisition_metadata(acq: Acquisition, db: Session) -> Acquisition:
         acq.evidence_identifier = None
     return acq
 
+
+def _apply_acquisition_result_metadata(acquisition, result):
+    """Safely applies available AcquisitionResult metadata to the Acquisition record."""
+    if getattr(result, "source_sha256", None) is not None:
+        acquisition.source_sha256 = result.source_sha256
+    if getattr(result, "destination_sha256", None) is not None:
+        acquisition.destination_sha256 = result.destination_sha256
+    if getattr(result, "source_md5", None) is not None:
+        acquisition.source_md5 = result.source_md5
+    if getattr(result, "destination_md5", None) is not None:
+        acquisition.destination_md5 = result.destination_md5
+    if getattr(result, "size_bytes", None) is not None:
+        acquisition.size_bytes = result.size_bytes
+    if getattr(result, "acquired_size_bytes", None) is not None:
+        acquisition.acquired_size_bytes = result.acquired_size_bytes
+    if getattr(result, "sector_size", None) is not None:
+        acquisition.sector_size = result.sector_size
+    if getattr(result, "tool_version", None) is not None:
+        acquisition.tool_version = result.tool_version
+    if getattr(result, "method", None):
+        try:
+            acquisition.acquisition_method = AcquisitionMethod(result.method)
+        except ValueError:
+            pass
+    if getattr(result, "vendor", None) is not None:
+        acquisition.vendor = result.vendor
+    if getattr(result, "device_model", None) is not None:
+        acquisition.device_model = result.device_model
+    if getattr(result, "source_filesystem", None) is not None:
+        acquisition.source_filesystem = result.source_filesystem
+    if getattr(result, "source_type", None) is not None:
+        acquisition.source_type = result.source_type
+    acquisition.hash_algorithm = "SHA-256"
+    if getattr(result, "notes", None):
+        acquisition.notes = (acquisition.notes or "") + getattr(result, "notes")
+
 def execute_acquisition(
     db: Session,
     case: Case,
@@ -385,26 +421,7 @@ def execute_acquisition(
         if result.verified and not getattr(result, "error_message", None):
             acquisition.status = AcquisitionStatus.COMPLETED
             acquisition.progress = 100
-            acquisition.source_sha256 = result.source_sha256
-            acquisition.destination_sha256 = result.destination_sha256
-            acquisition.source_md5 = result.source_md5
-            acquisition.destination_md5 = result.destination_md5
-            acquisition.size_bytes = result.size_bytes
-            acquisition.acquired_size_bytes = getattr(result, "acquired_size_bytes", None)
-            acquisition.sector_size = getattr(result, "sector_size", None)
-            acquisition.tool_version = getattr(result, "tool_version", None)
-            if getattr(result, "method", None):
-                try:
-                    acquisition.acquisition_method = AcquisitionMethod(result.method)
-                except ValueError:
-                    pass
-            acquisition.vendor = getattr(result, "vendor", None)
-            acquisition.device_model = getattr(result, "device_model", None)
-            acquisition.source_filesystem = getattr(result, "source_filesystem", None)
-            acquisition.source_type = getattr(result, "source_type", None)
-            acquisition.hash_algorithm = "SHA-256"
-            if getattr(result, "notes", None):
-                acquisition.notes = (acquisition.notes or "") + getattr(result, "notes")
+            _apply_acquisition_result_metadata(acquisition, result)
             acquisition.destination_reference = str(result.destination_path.relative_to(Path("data") / "case_data" / case.case_identifier)).replace("\\", "/")
             acquisition.completed_at = datetime.now(timezone.utc)
             acquisition.error_message = getattr(result, "error_message", None)
@@ -439,10 +456,7 @@ def execute_acquisition(
         else:
             acquisition.status = AcquisitionStatus.FAILED
             acquisition.error_message = result.error_message or "Integrity check failed: source and destination hashes do not match."
-            acquisition.source_sha256 = result.source_sha256
-            acquisition.destination_sha256 = result.destination_sha256
-            acquisition.source_md5 = result.source_md5
-            acquisition.destination_md5 = result.destination_md5
+            _apply_acquisition_result_metadata(acquisition, result)
             acquisition.completed_at = datetime.now(timezone.utc)
             db.commit()
 
@@ -454,8 +468,15 @@ def execute_acquisition(
                 details=json.dumps({
                     "acquisition_identifier": acq_ident,
                     "device_identifier": device.device_identifier,
-                    "method": getattr(acquisition, "acquisition_method", None),
+                    "method": str(getattr(acquisition, "acquisition_method", None)),
                     "status": "FAILED",
+                    "source_sha256": getattr(acquisition, "source_sha256", None),
+                    "destination_sha256": getattr(acquisition, "destination_sha256", None),
+                    "acquired_size_bytes": getattr(acquisition, "acquired_size_bytes", None),
+                    "sector_size": getattr(acquisition, "sector_size", None),
+                    "tool_version": getattr(acquisition, "tool_version", None),
+                    "source_type": getattr(acquisition, "source_type", None),
+                    "notes": getattr(acquisition, "notes", None),
                     "error": acquisition.error_message
                 })
             )
@@ -476,8 +497,15 @@ def execute_acquisition(
             details=json.dumps({
                 "acquisition_identifier": acq_ident,
                 "device_identifier": device.device_identifier,
-                "method": getattr(acquisition, "acquisition_method", None),
+                "method": str(getattr(acquisition, "acquisition_method", None)),
                 "status": "FAILED",
+                "source_sha256": getattr(acquisition, "source_sha256", None),
+                "destination_sha256": getattr(acquisition, "destination_sha256", None),
+                "acquired_size_bytes": getattr(acquisition, "acquired_size_bytes", None),
+                "sector_size": getattr(acquisition, "sector_size", None),
+                "tool_version": getattr(acquisition, "tool_version", None),
+                "source_type": getattr(acquisition, "source_type", None),
+                "notes": getattr(acquisition, "notes", None),
                 "error": str(e)
             })
         )
