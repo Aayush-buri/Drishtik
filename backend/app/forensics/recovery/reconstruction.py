@@ -171,8 +171,11 @@ class GraphReconstructor:
             for c2 in candidates:
                 if c1.candidate_id == c2.candidate_id: continue
                 edge = self.evaluate_edge(c1, c2)
+
+                # Append all evaluated edges (including rejected ones) for forensic inspection
+                edges.append(edge)
+
                 if not edge.rejected and edge.score > 0:
-                    edges.append(edge)
                     adj[c1.candidate_id].append(edge)
 
         paths = []
@@ -295,12 +298,14 @@ class GraphReconstructor:
             for n in overall_best_path:
                 used_cands.add(n)
 
-        # Final deterministic sort of paths just in case
+        # Deterministic sorting of public results
+        sorted_nodes = sorted(candidates, key=lambda c: c.candidate_id)
+        sorted_edges = sorted(edges, key=lambda e: (e.from_candidate_id, e.to_candidate_id))
         paths.sort(key=lambda p: (-p.total_score, -p.average_edge_score, p.candidate_ids))
 
         return {
             "method": "FRAGMENT_GRAPH_RECONSTRUCTION_V1",
-            "nodes": [c.__dict__ for c in candidates],
-            "edges": [e.__dict__ for e in edges],
+            "nodes": [c.__dict__ for c in sorted_nodes],
+            "edges": [e.__dict__ for e in sorted_edges],
             "paths": [p.__dict__ for p in paths]
         }

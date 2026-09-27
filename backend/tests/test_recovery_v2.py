@@ -32,6 +32,7 @@ def test_3_different_channels_reject():
     ]
     res = engine.reconstruct_fragments(cands)
     assert len(res["paths"]) == 2
+    assert any("channel mismatch" in e["rejection_reason"].lower() for e in res["edges"] if e["rejected"])
 
 def test_4_codec_mismatch_reject():
     engine = RecoveryEngine()
@@ -41,6 +42,7 @@ def test_4_codec_mismatch_reject():
     ]
     res = engine.reconstruct_fragments(cands)
     assert len(res["paths"]) == 2
+    assert any("codec mismatch" in e["rejection_reason"].lower() for e in res["edges"] if e["rejected"])
 
 def test_5_missing_channel_metadata_does_not_reject():
     engine = RecoveryEngine()
@@ -71,6 +73,7 @@ def test_7_impossible_sequence_regression():
     ]
     res = engine.reconstruct_fragments(cands)
     assert len(res["paths"]) == 2
+    assert any("backward sequence transition" in e["rejection_reason"].lower() for e in res["edges"] if e["rejected"])
 
 def test_8_timestamp_regression_rejects():
     engine = RecoveryEngine()
@@ -80,6 +83,7 @@ def test_8_timestamp_regression_rejects():
     ]
     res = engine.reconstruct_fragments(cands)
     assert len(res["paths"]) == 2
+    assert any("timestamp regression" in e["rejection_reason"].lower() for e in res["edges"] if e["rejected"])
 
 def test_9_16bit_sequence_wrap():
     engine = RecoveryEngine()
@@ -130,6 +134,7 @@ def test_13_vendor_format_mismatch():
     ]
     res = engine.reconstruct_fragments(cands)
     assert len(res["paths"]) == 2
+    assert any("mismatch" in e["rejection_reason"].lower() for e in res["edges"] if e["rejected"])
     for e in res["edges"]:
         assert e["rejected"] is True
 
@@ -181,6 +186,7 @@ def test_17_incompatible_gop_rejects():
     ]
     res = engine.reconstruct_fragments(cands)
     assert len(res["paths"]) == 2
+    assert any("gop discontinuity" in e["rejection_reason"].lower() for e in res["edges"] if e["rejected"])
 
 def test_18_missing_gop_metadata_neutral():
     engine = RecoveryEngine()
@@ -239,9 +245,6 @@ def test_22_identical_output_regardless_of_order():
     results = []
     for p in itertools.permutations(cands):
         res = engine.reconstruct_fragments(list(p))
-        # Zero out nodes list since that retains original order, we care about paths and edges
-        res["nodes"] = []
-        res["edges"] = sorted(res["edges"], key=lambda e: (e["from_candidate_id"], e["to_candidate_id"]))
         results.append(json.dumps(res, sort_keys=True))
 
     assert all(r == results[0] for r in results)
