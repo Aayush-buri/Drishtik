@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from .reconstruction import GraphReconstructor, FragmentDescriptor
 import struct
 
 from parsers.common.demuxer import BufferedFileReader
@@ -815,3 +816,27 @@ class RecoveryEngine:
                 remaining -= len(buf)
 
         return written
+
+    def reconstruct_fragments(self, candidates: List[RecoveryCandidate]) -> Dict[str, Any]:
+        descriptors = []
+        for c in candidates:
+            meta = c.metadata or {}
+
+            # Map common known metadata keys from Recovery v1
+            descriptors.append(FragmentDescriptor(
+                candidate_id=c.candidate_id,
+                source_offset=c.offset_bytes,
+                length_bytes=c.length_bytes,
+                vendor=c.detected_vendor,
+                format_name=c.format_name,
+                channel=meta.get("channel"),
+                sequence_start=meta.get("first_sequence"),
+                sequence_end=meta.get("last_sequence"),
+                first_timestamp=meta.get("first_timestamp"),
+                last_timestamp=meta.get("last_timestamp"),
+                codec=meta.get("codec"),
+                frame_count=meta.get("frame_count")
+            ))
+
+        reconstructor = GraphReconstructor()
+        return reconstructor.reconstruct(descriptors)
