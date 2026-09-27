@@ -76,11 +76,16 @@ class BlockchainService:
         last_event = (
             db.query(CustodyEvent)
             .filter(CustodyEvent.case_id == case.id, CustodyEvent.evidence_id == evidence.id)
-            .order_by(CustodyEvent.timestamp.desc())
+            .order_by(CustodyEvent.timestamp.desc(), CustodyEvent.id.desc())
             .first()
         )
         previous_ref = last_event.event_identifier if last_event else None
-        previous_hash = last_event.chain_digest if last_event and getattr(last_event, "chain_digest", None) else self.GENESIS_CHAIN_HASH
+        if not last_event:
+            previous_hash = self.GENESIS_CHAIN_HASH
+        elif getattr(last_event, "chain_digest", None):
+            previous_hash = last_event.chain_digest
+        else:
+            previous_hash = None
 
         event_identifier = self._generate_identifier("CUST")
 
@@ -89,20 +94,23 @@ class BlockchainService:
         metadata_hash = hashlib.sha256(meta_str.encode("utf-8")).hexdigest()
 
         # Build canonical payload
-        payload = {
-            "action": action,
-            "actor_id": user_id,
-            "actor_username": username,
-            "case_id": case.id,
-            "event_identifier": event_identifier,
-            "evidence_id": evidence.id,
-            "metadata_hash": metadata_hash,
-            "previous_event_hash": previous_hash,
-            "sha256": evidence.sha256 or "",
-            "timestamp_utc": self.canonicalize_custody_timestamp(current_time)
-        }
-        canonical_payload = self.canonicalize_custody_event(payload)
-        chain_digest = self.calculate_chain_digest(canonical_payload)
+        if previous_hash is not None:
+            payload = {
+                "action": action,
+                "actor_id": user_id,
+                "actor_username": username,
+                "case_id": case.id,
+                "event_identifier": event_identifier,
+                "evidence_id": evidence.id,
+                "metadata_hash": metadata_hash,
+                "previous_event_hash": previous_hash,
+                "sha256": evidence.sha256 or "",
+                "timestamp_utc": self.canonicalize_custody_timestamp(current_time)
+            }
+            canonical_payload = self.canonicalize_custody_event(payload)
+            chain_digest = self.calculate_chain_digest(canonical_payload)
+        else:
+            chain_digest = None
 
         # 2. Create local CustodyEvent record
         custody_event = CustodyEvent(
@@ -182,39 +190,40 @@ class BlockchainService:
                 evidence.blockchain_tx_id = anchor_result.transaction_id
                 evidence.blockchain_anchored_at = anchor_result.timestamp
 
-            # Store BlockchainAnchor record
-            anchor_record = BlockchainAnchor(
-                anchor_identifier=self._generate_identifier("ANCH"),
-                case_id=case.id,
-                evidence_id=evidence.id,
-                custody_event_id=custody_event.id,
-                sha256=evidence.sha256 or "",
-                event_type=action,
-                actor=username,
-                timestamp=current_time,
-                source="Drishtik Forensic Engine",
-                metadata_hash=anchor_result.metadata_hash,
-                transaction_id=anchor_result.transaction_id,
-                block_number=anchor_result.block_number,
-                channel_name=anchor_result.channel,
-                chaincode_name=anchor_result.chaincode,
-                status="ANCHORED"
-            )
-            db.add(anchor_record)
+                # Store BlockchainAnchor record
+                anchor_record = BlockchainAnchor(
+                    anchor_identifier=self._generate_identifier("ANCH"),
+                    case_id=case.id,
+                    evidence_id=evidence.id,
+                    custody_event_id=custody_event.id,
+                    sha256=evidence.sha256 or "",
+                    event_type=action,
+                    actor=username,
+                    timestamp=current_time,
+                    source="Drishtik Forensic Engine",
+                    metadata_hash=metadata_hash,
+                    transaction_id=anchor_result.transaction_id,
+                    block_number=anchor_result.block_number,
+                    channel_name=anchor_result.channel,
+                    chaincode_name=anchor_result.chaincode,
+                    status="ANCHORED"
+                )
+                db.add(anchor_record)
 
-            audit_complete = AuditLog(
-                case_id=case.id,
-                user_id=user_id,
-                action="BLOCKCHAIN_ANCHOR_COMPLETED",
-                target_identifier=evidence.evidence_identifier,
-                details=json.dumps({
-                    "transaction_id": anchor_result.transaction_id,
-                    "block_number": anchor_result.block_number,
-                    "channel": anchor_result.channel,
-                    "chaincode": anchor_result.chaincode
-                })
-            )
-            db.add(audit_complete)
+                audit_complete = AuditLog(
+                    case_id=case.id,
+                    user_id=user_id,
+                    action="BLOCKCHAIN_ANCHOR_COMPLETED",
+                    target_identifier=evidence.evidence_identifier,
+                    details=json.dumps({
+                        "transaction_id": anchor_result.transaction_id,
+                        "block_number": anchor_result.block_number,
+                        "channel": anchor_result.channel,
+                        "chaincode": anchor_result.chaincode
+                    })
+                )
+                db.add(audit_complete)
+
         else:
             # 5b. Blockchain unavailable or failed
             custody_event.blockchain_status = anchor_result.status
@@ -298,7 +307,7 @@ class BlockchainService:
         latest_custody = (
             db.query(CustodyEvent)
             .filter(CustodyEvent.case_id == case.id, CustodyEvent.evidence_id == evidence.id)
-            .order_by(CustodyEvent.timestamp.desc())
+            .order_by(CustodyEvent.timestamp.desc(), CustodyEvent.id.desc())
             .first()
         )
         if latest_custody:
@@ -446,7 +455,7 @@ class BlockchainService:
         return (
             db.query(CustodyEvent)
             .filter(CustodyEvent.case_id == case.id)
-            .order_by(CustodyEvent.timestamp.asc())
+            .order_by(CustodyEvent.timestamp.asc(), CustodyEvent.id.asc())
             .all()
         )
 
@@ -460,7 +469,7 @@ class BlockchainService:
         custody_history = (
             db.query(CustodyEvent)
             .filter(CustodyEvent.case_id == case.id, CustodyEvent.evidence_id == evidence.id)
-            .order_by(CustodyEvent.timestamp.asc())
+            .order_by(CustodyEvent.timestamp.asc(), CustodyEvent.id.asc())
             .all()
         )
 

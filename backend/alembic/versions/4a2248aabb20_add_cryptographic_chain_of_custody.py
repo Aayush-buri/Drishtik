@@ -78,11 +78,9 @@ def upgrade() -> None:
         if event.case_id != current_case_id or event.evidence_id != current_evidence_id:
             current_case_id = event.case_id
             current_evidence_id = event.evidence_id
-            expected_previous_hash = GENESIS_CHAIN_HASH
-            
-        # We need to construct the payload for this legacy event
-        # If any required immutable field is missing, we leave it NULL
-        if event.action and event.actor_id and event.actor_username and event.timestamp:
+            expected_previous_hash = GENESIS_CHAIN_HASH        # We need to construct the payload for this legacy event
+        # If any required immutable field is missing, or the chain is already broken, we leave it NULL
+        if expected_previous_hash is not None and event.action and event.actor_id and event.actor_username and event.timestamp:
             payload = {
                 "action": event.action,
                 "actor_id": event.actor_id,
@@ -102,8 +100,10 @@ def upgrade() -> None:
             event.chain_digest = digest
             expected_previous_hash = digest
         else:
-            # Cannot safely backfill, leave NULL, which means UNVERIFIED
-            expected_previous_hash = GENESIS_CHAIN_HASH # Break chain safely
+            # Cannot safely backfill or chain is broken, leave NULL, which means UNVERIFIED
+            event.previous_event_hash = None
+            event.chain_digest = None
+            expected_previous_hash = None # Break chain safely and do not reset to genesis
 
     session.commit()
 

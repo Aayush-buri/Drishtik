@@ -118,3 +118,11 @@ The local chain of custody implementation utilizes deterministic cryptographic h
 * **Verification Scope**: Local custody verification is distinct from blockchain ledger verification. The local verification endpoint (/api/v1/cases/{case_identifier}/blockchain/custody/verify) verifies the cryptographically linked list of local events, regardless of whether Fabric anchoring succeeded or was offline.
 
 *(Note: Real Fabric transaction execution is currently mocked for testing purposes.)*
+
+### Terminology
+
+* **previous_event_reference**: The human-readable / legacy event reference or identifier. This is NOT a cryptographic hash.
+* **previous_event_hash**: The cryptographic hash link to the previous custody event's chain_digest.
+* **chain_digest**: The SHA-256 digest of the canonical immutable custody-event payload, which includes previous_event_hash.
+
+*(Note: Real Fabric transaction execution is currently mocked for testing purposes. The blockchain anchoring process does not prove real-world authenticity, hardware genuineness, or identify people.)*
