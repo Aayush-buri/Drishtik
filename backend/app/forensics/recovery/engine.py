@@ -69,7 +69,7 @@ class DhavCarvingStrategy(CarvingStrategy):
         with BufferedFileReader(image_path) as reader:
             while reader.global_offset < limit:
                 if reader.size < 4:
-                    if not reader.read_more():
+                    if not reader.read_more(limit):
                         break
 
                 dhav_pos = reader.find(b"DHAV")
@@ -78,7 +78,7 @@ class DhavCarvingStrategy(CarvingStrategy):
                     if reader.global_offset + consume_len >= limit:
                         break
                     reader.advance(consume_len)
-                    if not reader.read_more():
+                    if not reader.read_more(limit):
                         break
                     continue
 
@@ -100,7 +100,7 @@ class DhavCarvingStrategy(CarvingStrategy):
 
                 while True:
                     while reader.size < 24:
-                        if not reader.read_more():
+                        if not reader.read_more(limit):
                             break
                     if reader.size < 24:
                         if frames > 0 and reader.size > 0:
@@ -142,7 +142,7 @@ class DhavCarvingStrategy(CarvingStrategy):
                         allowed_bytes = limit - (abs_offset + current_cand_len)
 
                         while reader.size < allowed_bytes:
-                            if not reader.read_more():
+                            if not reader.read_more(limit):
                                 break
 
                         available = min(reader.size, allowed_bytes)
@@ -152,7 +152,7 @@ class DhavCarvingStrategy(CarvingStrategy):
                         break
 
                     while reader.size < frame_len:
-                        if not reader.read_more():
+                        if not reader.read_more(limit):
                             break
 
                     if reader.size < frame_len:
@@ -180,7 +180,7 @@ class DhavCarvingStrategy(CarvingStrategy):
                             reader.advance(4)
                             current_cand_len += 4
                     elif reader.size < 4:
-                        reader.read_more()
+                        reader.read_more(limit)
                         if reader.size >= 4 and reader.data[0:4] == b"dhav":
                             if abs_offset + current_cand_len + 4 <= limit:
                                 reader.advance(4)
@@ -229,7 +229,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
         with BufferedFileReader(image_path) as reader:
             while reader.global_offset < limit:
                 if reader.size < 4:
-                    if not reader.read_more():
+                    if not reader.read_more(limit):
                         break
 
                 pos_hikv = reader.find(b"HIKV")
@@ -254,7 +254,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                     if reader.global_offset + consume_len >= limit:
                         break
                     reader.advance(consume_len)
-                    if not reader.read_more():
+                    if not reader.read_more(limit):
                         break
                     continue
 
@@ -287,7 +287,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
 
                         reader.advance(consume_len)
                         current_cand_len += consume_len
-                        if not reader.read_more():
+                        if not reader.read_more(limit):
                             current_cand_len += reader.size
                             reader.advance(reader.size)
                             break
@@ -304,7 +304,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                         # Parse MPEG-PS structurally
                         while True:
                             while reader.size < 14:
-                                if not reader.read_more():
+                                if not reader.read_more(limit):
                                     break
                             if reader.size < 14:
                                 if frames > 0 and reader.size > 0: status = "PARTIAL"
@@ -317,7 +317,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                             pack_len = 14 + (data[13] & 0x07)
 
                             while reader.size < pack_len + 6:
-                                if not reader.read_more():
+                                if not reader.read_more(limit):
                                     break
                             if reader.size < pack_len + 6:
                                 status = "PARTIAL"
@@ -344,7 +344,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                                     frame_len = next_ba
                                 else:
                                     found_next = False
-                                    while reader.read_more():
+                                    while reader.read_more(limit):
                                         next_ba = reader.find(b"\x00\x00\x01\xba", pes_start+4)
                                         if next_ba != -1:
                                             frame_len = next_ba
@@ -361,7 +361,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                                 status = "PARTIAL"
                                 allowed = limit - (abs_offset + current_cand_len)
                                 while reader.size < allowed:
-                                    if not reader.read_more():
+                                    if not reader.read_more(limit):
                                         break
                                 avail = min(reader.size, allowed)
                                 current_cand_len += avail
@@ -370,7 +370,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                                 break
 
                             while reader.size < frame_len:
-                                if not reader.read_more():
+                                if not reader.read_more(limit):
                                     break
 
                             if reader.size < frame_len:
@@ -437,7 +437,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
 
                     while True:
                         while reader.size < 14:
-                            if not reader.read_more():
+                            if not reader.read_more(limit):
                                 break
                         if reader.size < 14:
                             if frames > 0 and reader.size > 0: status = "PARTIAL"
@@ -451,7 +451,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                         pack_len = 14 + (data[13] & 0x07)
 
                         while reader.size < pack_len + 6:
-                            if not reader.read_more():
+                            if not reader.read_more(limit):
                                 break
                         if reader.size < pack_len + 6:
                             status = "PARTIAL"
@@ -475,7 +475,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                                 frame_len = next_ba
                             else:
                                 found_next = False
-                                while reader.read_more():
+                                while reader.read_more(limit):
                                     next_ba = reader.find(b"\x00\x00\x01\xba", pes_start+4)
                                     if next_ba != -1:
                                         frame_len = next_ba
@@ -492,7 +492,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                             status = "PARTIAL"
                             allowed = limit - (abs_offset + current_cand_len)
                             while reader.size < allowed:
-                                if not reader.read_more():
+                                if not reader.read_more(limit):
                                     break
                             avail = min(reader.size, allowed)
                             current_cand_len += avail
@@ -501,7 +501,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                             break
 
                         while reader.size < frame_len:
-                            if not reader.read_more():
+                            if not reader.read_more(limit):
                                 break
 
                         if reader.size < frame_len:
@@ -548,7 +548,7 @@ class Mp4FtypCarvingStrategy(CarvingStrategy):
         with BufferedFileReader(image_path) as reader:
             while reader.global_offset < limit:
                 if reader.size < 8:
-                    if not reader.read_more():
+                    if not reader.read_more(limit):
                         break
 
                 pos = reader.find(b"ftyp")
@@ -567,7 +567,7 @@ class Mp4FtypCarvingStrategy(CarvingStrategy):
 
                     while True:
                         while reader.size < 8:
-                            if not reader.read_more():
+                            if not reader.read_more(limit):
                                 break
                         if reader.size < 8:
                             if current_cand_len == 0: reader.advance(reader.size)
@@ -585,7 +585,7 @@ class Mp4FtypCarvingStrategy(CarvingStrategy):
                             status = "PARTIAL"
                             allowed = limit - (abs_offset + current_cand_len)
                             while reader.size < allowed:
-                                if not reader.read_more():
+                                if not reader.read_more(limit):
                                     break
                             avail = min(reader.size, allowed)
                             current_cand_len += avail
@@ -598,7 +598,7 @@ class Mp4FtypCarvingStrategy(CarvingStrategy):
                             has_mdat = True
 
                         while reader.size < box_size:
-                            if not reader.read_more():
+                            if not reader.read_more(limit):
                                 break
 
                         if reader.size < box_size:
@@ -636,7 +636,7 @@ class Mp4FtypCarvingStrategy(CarvingStrategy):
                     if reader.global_offset + consume_len >= limit:
                         break
                     reader.advance(consume_len)
-                    if not reader.read_more():
+                    if not reader.read_more(limit):
                         break
 
         return candidates

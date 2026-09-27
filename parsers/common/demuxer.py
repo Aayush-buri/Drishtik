@@ -104,11 +104,21 @@ class BufferedFileReader:
         if self._file:
             self._file.close()
 
-    def read_more(self) -> bool:
+    def read_more(self, max_global_offset: Optional[int] = None) -> bool:
         """Reads a chunk from the file into the buffer. Returns True if data was read."""
         if not self._file:
             return False
-        chunk = self._file.read(self.buffer_size)
+
+        read_size = self.buffer_size
+
+        if max_global_offset is not None:
+            buffered_end = self._global_offset + len(self._buffer)
+            remaining = max_global_offset - buffered_end
+            if remaining <= 0:
+                return False
+            read_size = min(read_size, remaining)
+
+        chunk = self._file.read(read_size)
         if not chunk:
             return False
         self._buffer.extend(chunk)
@@ -135,4 +145,3 @@ class BufferedFileReader:
     @property
     def size(self) -> int:
         return len(self._buffer)
-

@@ -265,3 +265,53 @@ def test_max_bytes_enforcement(tmp_path):
     assert c.length_bytes == 50
     assert c.metadata["structural_status"] == "PARTIAL"
     assert c.metadata.get("scan_limit_truncated") is True
+
+def test_max_bytes_physical_bound(tmp_path, monkeypatch):
+    """Ensure that the recovery engine physically stops reading at max_bytes limit."""
+    engine = RecoveryEngine()
+    fpath = tmp_path / "physical_limit.raw"
+
+    # Create file much larger than limit
+    fpath.write_bytes(b"\x55" * (2 * 1024 * 1024))
+
+    import builtins
+    original_open = builtins.open
+
+    all_reads = []
+    max_read_single_call = 0
+
+    class SpiedFile:
+        def __init__(self, f):
+            self.f = f
+            self.bytes_read = 0
+            all_reads.append(self)
+
+        def read(self, size=-1):
+            nonlocal max_read_single_call
+            res = self.f.read(size)
+            self.bytes_read += len(res)
+            if size != -1 and size > max_read_single_call:
+                max_read_single_call = size
+            return res
+
+        def __getattr__(self, attr):
+            return getattr(self.f, attr)
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.f.close()
+
+    def mocked_open(*args, **kwargs):
+        if str(args[0]) == str(fpath):
+            return SpiedFile(original_open(*args, **kwargs))
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setattr(builtins, 'open', mocked_open)
+
+    # Set limit to 50 bytes
+    cands = engine.scan_candidates(fpath, max_bytes=50)
+
+    # Ensure no individual reader read more than 50 bytes
+    for sf in all_reads:
+        assert sf.bytes_read <= 50
+    assert max_read_single_call <= 50
