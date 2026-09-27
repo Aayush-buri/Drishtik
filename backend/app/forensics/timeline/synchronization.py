@@ -140,7 +140,7 @@ def synchronize_cameras(
                 try:
                     ref_utc = _normalize_to_utc(ref_obs.timestamp, ref_obs.timezone)
                     cam_utc = _normalize_to_utc(cam_obs.timestamp, cam_obs.timezone)
-                except Exception as e:
+                except ValueError as e:
                     cam_warnings.append(f"Invalid timestamp data for event {evt_id}: {str(e)}")
                     continue
 
@@ -148,12 +148,14 @@ def synchronize_cameras(
                 diff = (ref_utc - cam_utc).total_seconds()
                 candidate_offsets.append(diff)
 
-        if not candidate_offsets:
-            cam_warnings.append("Camera has insufficient matched events with reference camera.")
+        n = len(candidate_offsets)
+
+        if n < 2:
+            cam_warnings.append("Insufficient matched observations for synchronization.")
             camera_results[cam_id] = CameraSyncResult(
                 camera_id=cam_id,
                 offset_seconds=None,
-                matched_observations_count=0,
+                matched_observations_count=n,
                 inlier_observations_count=0,
                 residual_error=0.0,
                 sync_confidence=0.0,
@@ -163,7 +165,6 @@ def synchronize_cameras(
 
         # Robust estimation: Median
         candidate_offsets.sort()
-        n = len(candidate_offsets)
         if n % 2 == 1:
             median_offset = candidate_offsets[n // 2]
         else:
@@ -191,7 +192,7 @@ def synchronize_cameras(
             )
             continue
 
-        if n > 1 and len(inliers) < 2:
+        if len(inliers) < 2:
             cam_warnings.append("Insufficient inliers for robust estimation.")
             camera_results[cam_id] = CameraSyncResult(
                 camera_id=cam_id,
@@ -239,8 +240,8 @@ def synchronize_cameras(
                         synchronized_utc=t_sync
                     )
                 )
-            except Exception:
-                pass
+            except ValueError as e:
+                warnings.append(f"Failed to generate synchronized observation for event {obs.event_id} on camera {obs.camera_id}: {str(e)}")
 
     return SynchronizationResult(
         reference_camera_id=reference_camera_id,
