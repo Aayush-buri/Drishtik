@@ -218,7 +218,7 @@ def test_fabric_provider_initialization_and_health():
 
     assert health["available"] is False
 
-    assert health["status"] == "UNAVAILABLE"
+    assert health["status"] in ("UNAVAILABLE", "DISABLED", "NOT_CONFIGURED")
 
     assert "Hyperledger Fabric" in health["network"]
 

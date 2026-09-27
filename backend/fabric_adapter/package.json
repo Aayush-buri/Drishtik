@@ -1,0 +1,14 @@
+{
+  "name": "drishtik-fabric-adapter",
+  "version": "1.0.0",
+  "description": "Hyperledger Fabric Gateway Adapter for Drishtik",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.9.0",
+    "@hyperledger/fabric-gateway": "^1.4.0",
+    "express": "^4.18.2"
+  }
+}
