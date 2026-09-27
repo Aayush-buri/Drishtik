@@ -835,7 +835,10 @@ class RecoveryEngine:
                 first_timestamp=meta.get("first_timestamp"),
                 last_timestamp=meta.get("last_timestamp"),
                 codec=meta.get("codec"),
-                frame_count=meta.get("frame_count")
+                frame_count=meta.get("frame_count"),
+                keyframe_count=meta.get("keyframe_count"),
+                gop_sequence_start=meta.get("gop_sequence_start"),
+                gop_sequence_end=meta.get("gop_sequence_end")
             ))
 
         reconstructor = GraphReconstructor()

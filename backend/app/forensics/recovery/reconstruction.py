@@ -15,6 +15,9 @@ class FragmentDescriptor:
     last_timestamp: Optional[int] = None
     codec: Optional[str] = None
     frame_count: Optional[int] = None
+    keyframe_count: Optional[int] = None
+    gop_sequence_start: Optional[int] = None
+    gop_sequence_end: Optional[int] = None
 
 @dataclass
 class FragmentEdge:
@@ -55,6 +58,23 @@ class GraphReconstructor:
 
     def evaluate_edge(self, c1: FragmentDescriptor, c2: FragmentDescriptor) -> FragmentEdge:
         edge = FragmentEdge(from_candidate_id=c1.candidate_id, to_candidate_id=c2.candidate_id)
+
+        # 1. DAG directionality rule
+        if c1.first_timestamp is not None and c2.first_timestamp is not None:
+            if c2.first_timestamp < c1.first_timestamp:
+                edge.rejected = True
+                edge.rejection_reason = "Timestamp regression prevents forward edge"
+                return edge
+            elif c2.first_timestamp == c1.first_timestamp:
+                if c2.source_offset <= c1.source_offset:
+                    edge.rejected = True
+                    edge.rejection_reason = "Equal timestamp but non-forward physical offset"
+                    return edge
+        else:
+            if c2.source_offset <= c1.source_offset:
+                edge.rejected = True
+                edge.rejection_reason = "Non-forward physical offset without timestamp progression"
+                return edge
 
         if c1.vendor != c2.vendor or c1.format_name != c2.format_name:
             edge.rejected = True
@@ -108,6 +128,15 @@ class GraphReconstructor:
                 edge.timestamp_score = self.weights["timestamp"] * 0.1
                 edge.reasons.append(f"Large unexplained time gap ({t_diff} ticks)")
 
+        if c1.gop_sequence_end is not None and c2.gop_sequence_start is not None:
+            if c1.gop_sequence_end + 1 == c2.gop_sequence_start:
+                edge.frame_score = self.weights["frame"]
+                edge.reasons.append("GOP continuity matched")
+            else:
+                edge.rejected = True
+                edge.rejection_reason = "Explicit GOP discontinuity"
+                return edge
+
         offset_diff = c2.source_offset - (c1.source_offset + c1.length_bytes)
         if offset_diff == 0:
             edge.offset_score = self.weights["offset"]
@@ -128,8 +157,6 @@ class GraphReconstructor:
             edge.offset_score
         )
 
-        # If score is exactly 0 but not rejected (e.g. no metadata at all), give it a tiny base score
-        # so it can still connect if there's no better alternative and no rejection.
         if edge.score == 0.0:
             edge.score = 0.01
             edge.reasons.append("Weak structural fallback")
@@ -144,7 +171,7 @@ class GraphReconstructor:
             for c2 in candidates:
                 if c1.candidate_id == c2.candidate_id: continue
                 edge = self.evaluate_edge(c1, c2)
-                if not edge.rejected and edge.score >= 0.05:
+                if not edge.rejected and edge.score > 0:
                     edges.append(edge)
                     adj[c1.candidate_id].append(edge)
 
@@ -156,40 +183,71 @@ class GraphReconstructor:
             if not rem: break
 
             memo = {}
-            def dfs(node, visited):
+            def dp(node):
                 if node in memo: return memo[node]
 
                 best_score = 0.0
+                best_avg = 0.0
                 best_path = [node]
                 best_edges = []
 
-                outgoing = sorted([e for e in adj[node] if e.to_candidate_id in rem],
-                                  key=lambda e: (-e.score, e.to_candidate_id))
+                # outgoing edges constrained to remaining nodes
+                outgoing = [e for e in adj[node] if e.to_candidate_id in rem]
 
                 for edge in outgoing:
                     nxt = edge.to_candidate_id
-                    if nxt not in visited:
-                        visited.add(nxt)
-                        sub_score, sub_path, sub_edges = dfs(nxt, visited)
-                        visited.remove(nxt)
+                    sub_score, sub_avg, sub_path, sub_edges = dp(nxt)
 
-                        cand_score = edge.score + sub_score
-                        if cand_score > best_score:
-                            best_score = cand_score
-                            best_path = [node] + sub_path
-                            best_edges = [edge] + sub_edges
+                    cand_score = edge.score + sub_score
+                    cand_edges = [edge] + sub_edges
+                    cand_avg = cand_score / len(cand_edges) if cand_edges else 0.0
+                    cand_path = [node] + sub_path
 
-                memo[node] = (best_score, best_path, best_edges)
+                    # Tie-breaking logic
+                    is_better = False
+                    if cand_score > best_score:
+                        is_better = True
+                    elif cand_score == best_score and best_score > 0:
+                        if cand_avg > best_avg:
+                            is_better = True
+                        elif cand_avg == best_avg:
+                            # Lexicographically smaller sequence of IDs
+                            if cand_path < best_path:
+                                is_better = True
+                    elif best_score == 0.0 and cand_score == 0.0:
+                        if cand_path < best_path:
+                            is_better = True
+
+                    if is_better:
+                        best_score = cand_score
+                        best_avg = cand_avg
+                        best_path = cand_path
+                        best_edges = cand_edges
+
+                memo[node] = (best_score, best_avg, best_path, best_edges)
                 return memo[node]
 
             overall_best_score = -1.0
+            overall_best_avg = -1.0
             overall_best_path = []
             overall_best_edges = []
 
-            for start_node in sorted(list(rem)):
-                score, path, edges_list = dfs(start_node, {start_node})
+            for start_node in list(rem):
+                score, avg, path, edges_list = dp(start_node)
+
+                is_better = False
                 if score > overall_best_score:
+                    is_better = True
+                elif score == overall_best_score:
+                    if avg > overall_best_avg:
+                        is_better = True
+                    elif avg == overall_best_avg:
+                        if not overall_best_path or path < overall_best_path:
+                            is_better = True
+
+                if is_better:
                     overall_best_score = score
+                    overall_best_avg = avg
                     overall_best_path = path
                     overall_best_edges = edges_list
 
@@ -221,14 +279,13 @@ class GraphReconstructor:
                         "reasons": e.reasons
                     })
 
-            avg = overall_best_score / len(overall_best_edges) if overall_best_edges else 0.0
-            conf = min(0.99, 0.5 + (avg * 0.5))
+            conf = min(0.99, 0.5 + (overall_best_avg * 0.5))
 
             paths.append(ReconstructedPath(
                 path_id=f"PATH-{overall_best_path[0]}",
                 candidate_ids=overall_best_path,
                 total_score=overall_best_score,
-                average_edge_score=avg,
+                average_edge_score=overall_best_avg,
                 confidence=conf,
                 unresolved_gaps=len(discontinuities),
                 discontinuities=discontinuities,
@@ -237,6 +294,9 @@ class GraphReconstructor:
 
             for n in overall_best_path:
                 used_cands.add(n)
+
+        # Final deterministic sort of paths just in case
+        paths.sort(key=lambda p: (-p.total_score, -p.average_edge_score, p.candidate_ids))
 
         return {
             "method": "FRAGMENT_GRAPH_RECONSTRUCTION_V1",
