@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from typing import Optional, Callable
 from app.forensics.acquisition.base import AcquisitionAdapter, AcquisitionResult
+from app.forensics.acquisition.hashing import calculate_file_hashes
 
 CHUNK_SIZE = 65536  # 64 KB
 
@@ -60,17 +61,10 @@ class FileCopyAdapter(AcquisitionAdapter):
             raise RuntimeError("CRITICAL FORENSIC VIOLATION: Source file was modified during acquisition!")
 
         # Calculate destination file hashes independently
-        dst_sha256 = hashlib.sha256()
-        dst_md5 = hashlib.md5()
-        with open(destination_path, "rb") as dst_file:
-            while chunk := dst_file.read(CHUNK_SIZE):
-                dst_sha256.update(chunk)
-                dst_md5.update(chunk)
+        dest_sha256_hex, dest_md5_hex, _ = calculate_file_hashes(destination_path, chunk_size=CHUNK_SIZE)
 
         source_sha256_hex = src_sha256.hexdigest()
-        dest_sha256_hex = dst_sha256.hexdigest()
         source_md5_hex = src_md5.hexdigest()
-        dest_md5_hex = dst_md5.hexdigest()
 
         verified = (source_sha256_hex == dest_sha256_hex)
         error_msg = None if verified else "Forensic hash mismatch between source and destination."

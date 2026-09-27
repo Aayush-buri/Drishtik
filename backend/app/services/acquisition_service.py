@@ -163,7 +163,7 @@ def execute_acquisition(
             adapter = get_network_acquisition_adapter(target, duration_seconds=network_duration_seconds)
             result = adapter.acquire(destination_dir)
 
-            if result.verified:
+            if result.verified and not getattr(result, "error_message", None):
                 acquisition.status = AcquisitionStatus.COMPLETED
                 acquisition.progress = 100
                 acquisition.source_sha256 = result.source_sha256
@@ -175,17 +175,22 @@ def execute_acquisition(
                 acquisition.sector_size = getattr(result, "sector_size", None)
                 acquisition.tool_version = getattr(result, "tool_version", None)
                 if getattr(result, "method", None):
-                    acquisition.acquisition_method = result.method
+                    try:
+                        acquisition.acquisition_method = AcquisitionMethod(result.method)
+                    except ValueError:
+                        pass
                 acquisition.vendor = getattr(result, "vendor", None)
                 acquisition.device_model = getattr(result, "device_model", None)
                 acquisition.source_filesystem = getattr(result, "source_filesystem", None)
                 acquisition.source_type = getattr(result, "source_type", None)
                 acquisition.hash_algorithm = "SHA-256"
+                if getattr(result, "notes", None):
+                    acquisition.notes = (acquisition.notes or "") + getattr(result, "notes")
                 acquisition.destination_reference = str(
                     result.destination_path.relative_to(Path("data") / "case_data" / case.case_identifier)
                 ).replace("\\", "/")
                 acquisition.completed_at = datetime.now(timezone.utc)
-                acquisition.error_message = None
+                acquisition.error_message = getattr(result, "error_message", None)
 
                 clock_offset = adapter.get_device_clock_offset()
                 if clock_offset:
@@ -211,6 +216,7 @@ def execute_acquisition(
                         "acquired_size_bytes": getattr(result, "acquired_size_bytes", None),
                         "method": getattr(acquisition, "acquisition_method", None),
                         "status": "COMPLETED",
+                        "error": getattr(acquisition, "error_message", None),
                         "verified": True,
                         "capture_type": "NETWORK_LIVE_PULL",
                     }),
@@ -376,7 +382,7 @@ def execute_acquisition(
             if post_stat != pre_stat:
                 raise RuntimeError("CRITICAL FORENSIC INTEGRITY VIOLATION: Source file was modified during acquisition!")
 
-        if result.verified:
+        if result.verified and not getattr(result, "error_message", None):
             acquisition.status = AcquisitionStatus.COMPLETED
             acquisition.progress = 100
             acquisition.source_sha256 = result.source_sha256
@@ -388,15 +394,20 @@ def execute_acquisition(
             acquisition.sector_size = getattr(result, "sector_size", None)
             acquisition.tool_version = getattr(result, "tool_version", None)
             if getattr(result, "method", None):
-                acquisition.acquisition_method = result.method
+                try:
+                    acquisition.acquisition_method = AcquisitionMethod(result.method)
+                except ValueError:
+                    pass
             acquisition.vendor = getattr(result, "vendor", None)
             acquisition.device_model = getattr(result, "device_model", None)
             acquisition.source_filesystem = getattr(result, "source_filesystem", None)
             acquisition.source_type = getattr(result, "source_type", None)
             acquisition.hash_algorithm = "SHA-256"
+            if getattr(result, "notes", None):
+                acquisition.notes = (acquisition.notes or "") + getattr(result, "notes")
             acquisition.destination_reference = str(result.destination_path.relative_to(Path("data") / "case_data" / case.case_identifier)).replace("\\", "/")
             acquisition.completed_at = datetime.now(timezone.utc)
-            acquisition.error_message = None
+            acquisition.error_message = getattr(result, "error_message", None)
 
             # Mark device as acquired
             if device.status == DeviceStatus.ACTIVE:
@@ -418,6 +429,7 @@ def execute_acquisition(
                     "acquired_size_bytes": getattr(result, "acquired_size_bytes", None),
                     "method": getattr(acquisition, "acquisition_method", None),
                     "status": "COMPLETED",
+                    "error": getattr(acquisition, "error_message", None),
                     "verified": True
                 })
             )

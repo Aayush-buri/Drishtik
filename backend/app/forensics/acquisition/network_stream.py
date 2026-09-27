@@ -42,6 +42,7 @@ from typing import Callable, Dict, List, Optional
 from xml.etree import ElementTree as ET
 
 from app.forensics.acquisition.base import AcquisitionAdapter, AcquisitionResult
+from app.forensics.acquisition.hashing import calculate_file_hashes
 from app.forensics.vendor_adapter import get_ffmpeg_executable
 from app.models.acquisition import AcquisitionMethod
 
@@ -435,17 +436,10 @@ class NetworkStreamAdapter(AcquisitionAdapter):
                 f"No data received from device '{self.target.device_label}'. FFmpeg output: {sanitized_tail}"
             )
 
-        verify_sha256 = hashlib.sha256()
-        verify_md5 = hashlib.md5()
-        with open(destination_path, "rb") as f:
-            while chunk := f.read(CHUNK_SIZE):
-                verify_sha256.update(chunk)
-                verify_md5.update(chunk)
+        dest_sha256_hex, dest_md5_hex, _ = calculate_file_hashes(destination_path, chunk_size=CHUNK_SIZE)
 
         source_sha256_hex = sha256.hexdigest()
         source_md5_hex = md5.hexdigest()
-        dest_sha256_hex = verify_sha256.hexdigest()
-        dest_md5_hex = verify_md5.hexdigest()
         verified = (source_sha256_hex == dest_sha256_hex) and (source_md5_hex == dest_md5_hex)
 
         if progress_callback:
@@ -460,7 +454,8 @@ class NetworkStreamAdapter(AcquisitionAdapter):
             acquired_size_bytes=bytes_written,
             destination_path=destination_path,
             verified=verified,
-            error_message="non-transcoding RTSP live acquisition; byte-for-byte source comparison not applicable",
+            error_message=None if verified else "Hash mismatch between received stream and written file.",
+            notes="non-transcoding RTSP live acquisition; byte-for-byte source comparison not applicable",
             item_count=1,
             method="NETWORK_LIVE_PULL",
             source_type="RTSP_STREAM",

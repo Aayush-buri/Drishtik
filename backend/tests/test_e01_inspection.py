@@ -113,7 +113,7 @@ def test_integration_disk_image_supported(tmp_path: Path, db_session):
             source_md5="123",
             destination_md5="123",
             size_bytes=8,
-            destination_path=Path("data") / "case_data" / case.case_identifier / "acq" / "dest.raw", method=AcquisitionMethod.DISK_IMAGE, sector_size=512, acquired_size_bytes=8, tool_version="Test", vendor=None, device_model=None, source_filesystem=None, source_type="IMAGE"
+            destination_path=Path("data") / "case_data" / case.case_identifier / "acq" / "dest.raw", method=AcquisitionMethod.DISK_IMAGE, sector_size=512, acquired_size_bytes=8, tool_version="Test", vendor=None, device_model=None, source_filesystem=None, source_type="IMAGE", error_message=None, notes=None
         )
         mock_get_adapter.return_value = mock_adapter
 

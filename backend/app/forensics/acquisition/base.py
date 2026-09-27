@@ -14,6 +14,7 @@ class AcquisitionResult:
     destination_path: Path
     verified: bool
     error_message: Optional[str] = None
+    notes: Optional[str] = None
     item_count: int = 1
     sector_size: Optional[int] = None
     tool_version: Optional[str] = None

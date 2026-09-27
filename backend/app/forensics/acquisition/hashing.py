@@ -3,11 +3,11 @@ from pathlib import Path
 from typing import Tuple
 
 def calculate_file_hashes(file_path: Path | str, chunk_size: int = 65536) -> Tuple[str, str, int]:
-    ""\"
+    """
     Calculates SHA-256 and MD5 hashes for a file incrementally.
     Never reads the entire large acquisition into RAM.
     Returns (sha256_hex, md5_hex, total_bytes_read).
-    ""\"
+    """
     file_path = Path(file_path)
     if not file_path.exists() or not file_path.is_file():
         raise FileNotFoundError(f"File not found: {file_path}")
