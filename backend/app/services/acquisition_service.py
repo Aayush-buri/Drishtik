@@ -202,26 +202,7 @@ def execute_acquisition(
             if result.verified and not getattr(result, "error_message", None):
                 acquisition.status = AcquisitionStatus.COMPLETED
                 acquisition.progress = 100
-                acquisition.source_sha256 = result.source_sha256
-                acquisition.destination_sha256 = result.destination_sha256
-                acquisition.source_md5 = result.source_md5
-                acquisition.destination_md5 = result.destination_md5
-                acquisition.size_bytes = result.size_bytes
-                acquisition.acquired_size_bytes = getattr(result, "acquired_size_bytes", None)
-                acquisition.sector_size = getattr(result, "sector_size", None)
-                acquisition.tool_version = getattr(result, "tool_version", None)
-                if getattr(result, "method", None):
-                    try:
-                        acquisition.acquisition_method = AcquisitionMethod(result.method)
-                    except ValueError:
-                        pass
-                acquisition.vendor = getattr(result, "vendor", None)
-                acquisition.device_model = getattr(result, "device_model", None)
-                acquisition.source_filesystem = getattr(result, "source_filesystem", None)
-                acquisition.source_type = getattr(result, "source_type", None)
-                acquisition.hash_algorithm = "SHA-256"
-                if getattr(result, "notes", None):
-                    acquisition.notes = (acquisition.notes or "") + getattr(result, "notes")
+                _apply_acquisition_result_metadata(acquisition, result)
                 acquisition.destination_reference = str(
                     result.destination_path.relative_to(Path("data") / "case_data" / case.case_identifier)
                 ).replace("\\", "/")
@@ -262,8 +243,7 @@ def execute_acquisition(
             else:
                 acquisition.status = AcquisitionStatus.FAILED
                 acquisition.error_message = result.error_message or "Network stream capture verification failed."
-                acquisition.source_sha256 = result.source_sha256
-                acquisition.destination_sha256 = result.destination_sha256
+                _apply_acquisition_result_metadata(acquisition, result)
                 acquisition.completed_at = datetime.now(timezone.utc)
                 db.commit()
 
@@ -275,9 +255,16 @@ def execute_acquisition(
                     details=json.dumps({
                         "acquisition_identifier": acq_ident,
                         "device_identifier": device.device_identifier,
-                        "method": getattr(acquisition, "acquisition_method", None),
+                        "method": str(getattr(acquisition, "acquisition_method", None)),
                         "status": "FAILED",
-                        "error": acquisition.error_message,
+                        "source_sha256": getattr(acquisition, "source_sha256", None),
+                        "destination_sha256": getattr(acquisition, "destination_sha256", None),
+                        "acquired_size_bytes": getattr(acquisition, "acquired_size_bytes", None),
+                        "sector_size": getattr(acquisition, "sector_size", None),
+                        "tool_version": getattr(acquisition, "tool_version", None),
+                        "source_type": getattr(acquisition, "source_type", None),
+                        "notes": getattr(acquisition, "notes", None),
+                        "error": acquisition.error_message
                     }),
                 )
                 db.add(audit_fail)
@@ -285,6 +272,8 @@ def execute_acquisition(
         except Exception as e:
             acquisition.status = AcquisitionStatus.FAILED
             acquisition.error_message = str(e)
+            if 'result' in locals() and result:
+                _apply_acquisition_result_metadata(acquisition, result)
             acquisition.completed_at = datetime.now(timezone.utc)
             db.commit()
 
@@ -296,9 +285,16 @@ def execute_acquisition(
                 details=json.dumps({
                     "acquisition_identifier": acq_ident,
                     "device_identifier": device.device_identifier,
-                    "method": getattr(acquisition, "acquisition_method", None),
+                    "method": str(getattr(acquisition, "acquisition_method", None)),
                     "status": "FAILED",
-                    "error": str(e),
+                    "source_sha256": getattr(acquisition, "source_sha256", None),
+                    "destination_sha256": getattr(acquisition, "destination_sha256", None),
+                    "acquired_size_bytes": getattr(acquisition, "acquired_size_bytes", None),
+                    "sector_size": getattr(acquisition, "sector_size", None),
+                    "tool_version": getattr(acquisition, "tool_version", None),
+                    "source_type": getattr(acquisition, "source_type", None),
+                    "notes": getattr(acquisition, "notes", None),
+                    "error": str(e)
                 }),
             )
             db.add(audit_fail)
@@ -486,6 +482,8 @@ def execute_acquisition(
     except Exception as e:
         acquisition.status = AcquisitionStatus.FAILED
         acquisition.error_message = str(e)
+        if 'result' in locals() and result:
+            _apply_acquisition_result_metadata(acquisition, result)
         acquisition.completed_at = datetime.now(timezone.utc)
         db.commit()
 

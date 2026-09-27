@@ -215,3 +215,100 @@ def test_service_level_e01_unavailable(tmp_path: Path, db_session):
         assert acq.sector_size is None
         assert acq.tool_version == "pyewf fallback"
         assert "libewf not installed" in acq.error_message
+import pytest
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+from app.services.acquisition_service import execute_acquisition
+from app.models.acquisition import AcquisitionMethod, AcquisitionStatus
+from app.models.case import Case
+from app.models.device import Device
+from app.models.audit import AuditLog
+from datetime import datetime, timezone
+
+def test_service_level_network_failure(tmp_path: Path, db_session):
+    # Network failure metadata persistence
+    case = Case(case_identifier="CASE-TEST3", name="Test Case 3", created_by=1)
+    db_session.add(case)
+    db_session.commit()
+    device = Device(device_identifier="DEV-TEST3", manufacturer="Test", status="ACTIVE", case_id=case.id, created_by=1, ip_address="192.168.1.100")
+    db_session.add(device)
+    db_session.commit()
+
+    with patch('app.services.acquisition_service.get_network_acquisition_adapter') as mock_get_adapter:
+        mock_adapter = MagicMock()
+        mock_adapter.acquire.return_value = MagicMock(
+            verified=False,
+            method="NETWORK_LIVE_PULL",
+            source_sha256=None,
+            source_md5=None,
+            destination_sha256="dest_sha_network",
+            destination_md5="dest_md5_network",
+            acquired_size_bytes=1024,
+            size_bytes=1024,
+            source_type="RTSP_STREAM",
+            tool_version="FFmpeg 4.4",
+            notes="non-transcoding RTSP live acquisition; byte-for-byte source comparison not applicable",
+            error_message="Stream interrupted before requested duration",
+            vendor=None,
+            device_model=None,
+            source_filesystem=None,
+            sector_size=None,
+            destination_path=Path("data/case_data/CASE-TEST3/acq/stream.ts")
+        )
+        mock_get_adapter.return_value = mock_adapter
+
+        acq = execute_acquisition(db_session, case, device, AcquisitionMethod.NETWORK_LIVE_PULL, "192.168.1.100", 1)
+
+        assert acq.status == AcquisitionStatus.FAILED
+        assert acq.acquisition_method.value == "NETWORK_LIVE_PULL"
+        assert acq.destination_sha256 == "dest_sha_network"
+        assert acq.acquired_size_bytes == 1024
+        assert acq.source_type == "RTSP_STREAM"
+        assert acq.tool_version == "FFmpeg 4.4"
+        assert "byte-for-byte source comparison not applicable" in acq.notes
+        assert acq.error_message == "Stream interrupted before requested duration"
+        assert acq.source_sha256 is None
+        assert acq.source_md5 is None
+
+        # Check Audit Log
+        audit = db_session.query(AuditLog).filter_by(action="ACQUISITION_FAILED").order_by(AuditLog.id.desc()).first()
+        assert audit is not None
+        assert "dest_sha_network" in audit.details
+        assert "password" not in audit.details.lower()
+        assert "admin" not in audit.details.lower() # ensure no credentials are logged
+
+def test_service_level_generic_exception(tmp_path: Path, db_session):
+    # Generic exception metadata persistence
+    case = Case(case_identifier="CASE-TEST4", name="Test Case 4", created_by=1)
+    db_session.add(case)
+    db_session.commit()
+    device = Device(device_identifier="DEV-TEST4", manufacturer="Test", status="ACTIVE", case_id=case.id, created_by=1)
+    db_session.add(device)
+    db_session.commit()
+
+    staging_dir = Path("data/case_data") / case.case_identifier / "staging"
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    src_file = staging_dir / "src4.bin"
+    src_file.write_bytes(b"exception_test")
+
+    with patch('app.services.acquisition_service.get_acquisition_adapter') as mock_get_adapter:
+        mock_adapter = MagicMock()
+        # Mock adapter to raise an exception but after partially doing something?
+        # If it raises before result, result is not bound.
+        # But let's say it raises inside the execute_acquisition block after result is assigned.
+        # We can mock adapter.acquire to raise an exception. Since
+# result is assigned there, it will not be bound in locals() if acquire() raises it.
+        # But if we raise an exception during file verification:
+        mock_adapter.acquire.side_effect = Exception("Sudden hardware disconnection")
+        mock_get_adapter.return_value = mock_adapter
+
+        acq = execute_acquisition(db_session, case, device, AcquisitionMethod.FILE_COPY, str(src_file), 1)
+
+        assert acq.status == AcquisitionStatus.FAILED
+        assert acq.completed_at is not None
+        assert acq.error_message == "Sudden hardware disconnection"
+
+        # Check Audit Log
+        audit = db_session.query(AuditLog).filter_by(action="ACQUISITION_FAILED").order_by(AuditLog.id.desc()).first()
+        assert audit is not None
+        assert "Sudden hardware disconnection" in audit.details
