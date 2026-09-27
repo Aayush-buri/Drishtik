@@ -98,7 +98,18 @@ def test_12_dst_aware_timezone():
     assert res_w.normalized_timestamp.hour == 17
 
 def test_13_calibration_provenance():
-    pass
+    dt = datetime(2023, 1, 1, 12, 0, 0)
+    model = ClockModel(
+        offset_seconds=10,
+        calibration_method="MANUAL_SYNC",
+        calibration_confidence=0.8,
+        calibration_reason="Compared against verified external reference"
+    )
+    res = normalize_forensic_timeline(dt, model)
+    assert res.confidence == 0.8
+    assert any("manual_sync" in w.lower() for w in res.warnings)
+    assert model.calibration_reason == "Compared against verified external reference"
+
 
 def test_14_missing_timezone_explicit_warning():
     dt = datetime(2023, 1, 1, 12, 0, 0)
