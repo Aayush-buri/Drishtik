@@ -573,10 +573,10 @@ class RecoveryEngine:
                 # If the length is equal to exactly what we carved, it means we reached the structural end!
                 if (has_annex_b and has_second_dhav) or length_bytes == 24 + payload_size:
                     return {"status": "VALID", "details": f"Confirmed Dahua DHAV stream/frame ({length_bytes} bytes)", "confidence": 0.95}
-                elif has_annex_b or has_second_dhav:
-                    return {"status": "PARTIAL", "details": f"Isolated Dahua DHAV frame fragment detected ({length_bytes} bytes)", "confidence": 0.75}
+                elif has_annex_b or has_second_dhav or length_bytes < 24 + payload_size:
+                    return {"status": "PARTIAL", "details": f"Isolated or truncated Dahua DHAV frame detected ({length_bytes} bytes)", "confidence": 0.75}
                 else:
-                    return {"status": "CORRUPTED", "details": "DHAV header present but payload data is truncated or corrupt", "confidence": 0.30}
+                    return {"status": "CORRUPTED", "details": "DHAV header present but payload data is malformed", "confidence": 0.30}
 
             # 2. Hikvision
             if "Hikvision" in detected_format or sample.startswith(b"HIKV") or sample.startswith(b"\x00\x00\x01\xba"):

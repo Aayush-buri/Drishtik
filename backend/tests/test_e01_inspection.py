@@ -103,7 +103,7 @@ def test_integration_disk_image_supported(tmp_path: Path, db_session):
         mock_adapter = MagicMock(spec=DiskImageAdapter)
         mock_adapter.inspect_image.return_value = MagicMock(
             status=DiskImageInspectionStatus.SUPPORTED,
-            info=DiskImageInfo(image_format="Raw", size_bytes=8, sector_size=512),
+            info=DiskImageInfo(image_format="Raw", size_bytes=8, is_supported=True, sector_size=512),
             message="Looks good"
         )
         mock_adapter.acquire.return_value = MagicMock(
