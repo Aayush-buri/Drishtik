@@ -86,10 +86,8 @@ class DhavCarvingStrategy(CarvingStrategy):
                 if abs_offset >= limit:
                     break
 
-                # Found a potential candidate start
                 reader.advance(dhav_pos)
-                
-                # Start structural validation of contiguous frames
+
                 cand_channel = -1
                 last_seq = -1
                 frames = 0
@@ -98,7 +96,8 @@ class DhavCarvingStrategy(CarvingStrategy):
                 total_payload = 0
                 current_cand_len = 0
                 status = "VALID"
-                
+                scan_limit_hit = False
+
                 while True:
                     while reader.size < 24:
                         if not reader.read_more():
@@ -109,51 +108,60 @@ class DhavCarvingStrategy(CarvingStrategy):
                         if frames == 0:
                             reader.advance(reader.size)
                         break
-                    
+
                     data = reader.data
                     if data[0:4] != b"DHAV":
                         break
-                    
+
                     frame_channel = data[5] + 1
                     seq_num = struct.unpack_from("<H", data, 6)[0]
                     payload_size = struct.unpack_from("<I", data, 8)[0]
                     raw_ts = struct.unpack_from("<I", data, 12)[0]
-                    
+
                     if payload_size == 0 or payload_size > 10 * 1024 * 1024:
                         if frames == 0:
-                            # Not a valid start, skip magic
                             reader.advance(4)
                         break
-                        
+
                     if cand_channel == -1:
                         cand_channel = frame_channel
                     elif frame_channel != cand_channel:
-                        # Channel switch breaks candidate
                         break
-                        
+
                     if last_seq != -1:
-                        # Allow wrap around or exact continuation, else it lowers confidence, but for contiguous candidate we can accept it if magic is right,
-                        # but "unexplained discontinuity must reduce confidence or terminate". 
-                        # Let's check sequence continuity (seq_num is uint16)
                         expected_seq = (last_seq + 1) % 65536
                         if seq_num != expected_seq and seq_num != 0:
-                            # Break candidate on unexplained sequence jump
                             break
-                            
-                    # We need the full payload to validate it's structurally there
+
                     frame_len = 24 + payload_size
+
+                    # Check scan limit bounds
+                    if abs_offset + current_cand_len + frame_len > limit:
+                        scan_limit_hit = True
+                        status = "PARTIAL"
+                        allowed_bytes = limit - (abs_offset + current_cand_len)
+
+                        while reader.size < allowed_bytes:
+                            if not reader.read_more():
+                                break
+
+                        available = min(reader.size, allowed_bytes)
+                        current_cand_len += available
+                        frames += 1
+                        reader.advance(available)
+                        break
+
                     while reader.size < frame_len:
                         if not reader.read_more():
                             break
-                            
+
                     if reader.size < frame_len:
-                        # Truncated payload
                         status = "PARTIAL"
                         current_cand_len += reader.size
                         frames += 1
                         reader.advance(reader.size)
                         break
-                        
+
                     current_cand_len += frame_len
                     frames += 1
                     last_seq = seq_num
@@ -161,22 +169,37 @@ class DhavCarvingStrategy(CarvingStrategy):
                         first_ts = raw_ts
                     last_ts = raw_ts
                     total_payload += payload_size
-                    
+
                     reader.advance(frame_len)
-                    
-                    # Optionally skip footer "dhav"
+
                     if reader.size >= 4 and reader.data[0:4] == b"dhav":
-                        reader.advance(4)
-                        current_cand_len += 4
-                    elif reader.size < 4:
-                        # We might need to read more to check footer, but it's optional
-                        reader.read_more()
-                        if reader.size >= 4 and reader.data[0:4] == b"dhav":
+                        if abs_offset + current_cand_len + 4 > limit:
+                            # Skip footer if it exceeds limit
+                            pass
+                        else:
                             reader.advance(4)
                             current_cand_len += 4
+                    elif reader.size < 4:
+                        reader.read_more()
+                        if reader.size >= 4 and reader.data[0:4] == b"dhav":
+                            if abs_offset + current_cand_len + 4 <= limit:
+                                reader.advance(4)
+                                current_cand_len += 4
 
                 if frames > 0:
                     confidence = 0.95 if status == "VALID" and frames > 1 else (0.85 if frames == 1 else 0.70)
+                    meta = {
+                        "channel": cand_channel,
+                        "first_sequence": seq_num if frames==1 else (last_seq - frames + 1)%65536,
+                        "last_sequence": last_seq,
+                        "frame_count": frames,
+                        "first_timestamp": first_ts,
+                        "last_timestamp": last_ts,
+                        "payload_bytes": total_payload,
+                        "structural_status": status,
+                    }
+                    if scan_limit_hit:
+                        meta["scan_limit_truncated"] = True
                     candidates.append(
                         RecoveryCandidate(
                             candidate_id=f"REC-DHAV-{abs_offset:08X}",
@@ -186,16 +209,7 @@ class DhavCarvingStrategy(CarvingStrategy):
                             format_name="Dahua DAV Frame",
                             confidence=confidence,
                             signature_matched="DHAV",
-                            metadata={
-                                "channel": cand_channel,
-                                "first_sequence": seq_num if frames==1 else (last_seq - frames + 1)%65536,
-                                "last_sequence": last_seq,
-                                "frame_count": frames,
-                                "first_timestamp": first_ts,
-                                "last_timestamp": last_ts,
-                                "payload_bytes": total_payload,
-                                "structural_status": status,
-                            },
+                            metadata=meta,
                         )
                     )
 
@@ -220,8 +234,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
 
                 pos_hikv = reader.find(b"HIKV")
                 pos_ps = reader.find(b"\x00\x00\x01\xba")
-                
-                # find earliest
+
                 pos = -1
                 is_hikv = False
                 if pos_hikv != -1 and pos_ps != -1:
@@ -235,7 +248,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                     is_hikv = True
                 elif pos_ps != -1:
                     pos = pos_ps
-                    
+
                 if pos == -1:
                     consume_len = max(0, reader.size - 3)
                     if reader.global_offset + consume_len >= limit:
@@ -250,28 +263,178 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                     break
 
                 reader.advance(pos)
-                
+
                 if is_hikv:
                     # Proprietary HIKV wrapper
-                    candidates.append(
-                        RecoveryCandidate(
-                            candidate_id=f"REC-HIK-{abs_offset:08X}",
-                            offset_bytes=abs_offset,
-                            length_bytes=32, # Safe known extent
-                            detected_vendor="Hikvision",
-                            format_name="Hikvision HIKV Frame",
-                            confidence=0.70,
-                            signature_matched="HIKV",
-                            metadata={"structural_status": "PARTIAL", "details": "Wrapper extent uncertain"},
-                        )
-                    )
+                    current_cand_len = 4
                     reader.advance(4)
+                    found_ps = False
+                    status = "PARTIAL"
+
+                    while True:
+                        pos_ba = reader.find(b"\x00\x00\x01\xba")
+                        if pos_ba != -1:
+                            found_ps = True
+                            break
+
+                        consume_len = max(0, reader.size - 3)
+                        if abs_offset + current_cand_len + consume_len >= limit:
+                            # Hit limit without finding MPEG-PS
+                            avail = limit - (abs_offset + current_cand_len)
+                            current_cand_len += avail
+                            reader.advance(avail)
+                            break
+
+                        reader.advance(consume_len)
+                        current_cand_len += consume_len
+                        if not reader.read_more():
+                            current_cand_len += reader.size
+                            reader.advance(reader.size)
+                            break
+
+                    if found_ps:
+                        current_cand_len += pos_ba
+                        reader.advance(pos_ba)
+
+                        ps_start_offset = abs_offset + current_cand_len
+                        frames = 0
+                        scan_limit_hit = False
+                        status = "VALID"
+
+                        # Parse MPEG-PS structurally
+                        while True:
+                            while reader.size < 14:
+                                if not reader.read_more():
+                                    break
+                            if reader.size < 14:
+                                if frames > 0 and reader.size > 0: status = "PARTIAL"
+                                break
+
+                            data = reader.data
+                            if data[0:4] != b"\x00\x00\x01\xba":
+                                break
+
+                            pack_len = 14 + (data[13] & 0x07)
+
+                            while reader.size < pack_len + 6:
+                                if not reader.read_more():
+                                    break
+                            if reader.size < pack_len + 6:
+                                status = "PARTIAL"
+                                avail = reader.size
+                                if abs_offset + current_cand_len + avail > limit:
+                                    avail = limit - (abs_offset + current_cand_len)
+                                    scan_limit_hit = True
+                                current_cand_len += avail
+                                reader.advance(avail)
+                                frames += 1
+                                break
+
+                            data = reader.data
+                            if data[pack_len:pack_len+3] != b"\x00\x00\x01":
+                                pass
+
+                            pes_start = pack_len
+                            pes_code = data[pes_start+3]
+                            pes_len = struct.unpack_from(">H", data, pes_start+4)[0]
+
+                            if pes_len == 0:
+                                next_ba = reader.find(b"\x00\x00\x01\xba", pes_start+4)
+                                if next_ba != -1:
+                                    frame_len = next_ba
+                                else:
+                                    found_next = False
+                                    while reader.read_more():
+                                        next_ba = reader.find(b"\x00\x00\x01\xba", pes_start+4)
+                                        if next_ba != -1:
+                                            frame_len = next_ba
+                                            found_next = True
+                                            break
+                                    if not found_next:
+                                        status = "PARTIAL"
+                                        frame_len = reader.size
+                            else:
+                                frame_len = pack_len + 6 + pes_len
+
+                            if abs_offset + current_cand_len + frame_len > limit:
+                                scan_limit_hit = True
+                                status = "PARTIAL"
+                                allowed = limit - (abs_offset + current_cand_len)
+                                while reader.size < allowed:
+                                    if not reader.read_more():
+                                        break
+                                avail = min(reader.size, allowed)
+                                current_cand_len += avail
+                                reader.advance(avail)
+                                frames += 1
+                                break
+
+                            while reader.size < frame_len:
+                                if not reader.read_more():
+                                    break
+
+                            if reader.size < frame_len:
+                                status = "PARTIAL"
+                                current_cand_len += reader.size
+                                reader.advance(reader.size)
+                                frames += 1
+                                break
+
+                            current_cand_len += frame_len
+                            reader.advance(frame_len)
+                            frames += 1
+
+                        meta = {
+                            "structural_status": status,
+                            "wrapper_extent_known": False,
+                            "mpeg_ps_start_offset": ps_start_offset,
+                            "mpeg_ps_structural_length": (abs_offset + current_cand_len) - ps_start_offset,
+                            "frame_count": frames,
+                            "details": "HIKV wrapper boundary unverified; candidate bounded by MPEG-PS structure"
+                        }
+                        if scan_limit_hit:
+                            meta["scan_limit_truncated"] = True
+
+                        candidates.append(
+                            RecoveryCandidate(
+                                candidate_id=f"REC-HIK-{abs_offset:08X}",
+                                offset_bytes=abs_offset,
+                                length_bytes=current_cand_len,
+                                detected_vendor="Hikvision",
+                                format_name="Hikvision HIKV Frame",
+                                confidence=0.85 if frames > 0 else 0.70,
+                                signature_matched="HIKV",
+                                metadata=meta,
+                            )
+                        )
+                    else:
+                        meta = {
+                            "structural_status": "PARTIAL",
+                            "wrapper_extent_known": False,
+                            "details": "HIKV signature found but no subsequent MPEG-PS structure could be validated"
+                        }
+                        if current_cand_len > 4: # Hit limit or EOF while searching
+                            meta["scan_limit_truncated"] = True
+
+                        candidates.append(
+                            RecoveryCandidate(
+                                candidate_id=f"REC-HIK-{abs_offset:08X}",
+                                offset_bytes=abs_offset,
+                                length_bytes=current_cand_len,
+                                detected_vendor="Hikvision",
+                                format_name="Hikvision HIKV Header",
+                                confidence=0.60,
+                                signature_matched="HIKV",
+                                metadata=meta,
+                            )
+                        )
                 else:
                     # MPEG-PS Pack
                     current_cand_len = 0
                     status = "VALID"
                     frames = 0
-                    
+                    scan_limit_hit = False
+
                     while True:
                         while reader.size < 14:
                             if not reader.read_more():
@@ -280,49 +443,37 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                             if frames > 0 and reader.size > 0: status = "PARTIAL"
                             if frames == 0: reader.advance(reader.size)
                             break
-                            
+
                         data = reader.data
                         if data[0:4] != b"\x00\x00\x01\xba":
                             break
-                            
-                        # Pack header is 14 bytes usually, then PES follows
-                        # But PES can be parsed by length
-                        pack_len = 14
-                        # check stuffing
-                        stuffing = data[13] & 0x07
-                        pack_len += stuffing
-                        
+
+                        pack_len = 14 + (data[13] & 0x07)
+
                         while reader.size < pack_len + 6:
                             if not reader.read_more():
                                 break
                         if reader.size < pack_len + 6:
                             status = "PARTIAL"
-                            current_cand_len += reader.size
-                            reader.advance(reader.size)
+                            avail = reader.size
+                            if abs_offset + current_cand_len + avail > limit:
+                                avail = limit - (abs_offset + current_cand_len)
+                                scan_limit_hit = True
+                            current_cand_len += avail
+                            reader.advance(avail)
                             frames += 1
                             break
-                            
+
                         data = reader.data
-                        if data[pack_len:pack_len+3] != b"\x00\x00\x01":
-                            # End of contiguous MPEG-PS
-                            # Or maybe a system header?
-                            pass
-                            
-                        # Find next pack header or use PES length
-                        # Let's just consume until we don't see valid MPEG-PS codes.
-                        # It's safer to just search for next BA code or advance by PES length.
                         pes_start = pack_len
                         pes_code = data[pes_start+3]
                         pes_len = struct.unpack_from(">H", data, pes_start+4)[0]
-                        
+
                         if pes_len == 0:
-                            # unbounded video PES (e.g. video)
-                            # must find next pack header
                             next_ba = reader.find(b"\x00\x00\x01\xba", pes_start+4)
                             if next_ba != -1:
                                 frame_len = next_ba
                             else:
-                                # We need to read more until we find it or EOF
                                 found_next = False
                                 while reader.read_more():
                                     next_ba = reader.find(b"\x00\x00\x01\xba", pes_start+4)
@@ -335,23 +486,39 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                                     frame_len = reader.size
                         else:
                             frame_len = pack_len + 6 + pes_len
-                            
+
+                        if abs_offset + current_cand_len + frame_len > limit:
+                            scan_limit_hit = True
+                            status = "PARTIAL"
+                            allowed = limit - (abs_offset + current_cand_len)
+                            while reader.size < allowed:
+                                if not reader.read_more():
+                                    break
+                            avail = min(reader.size, allowed)
+                            current_cand_len += avail
+                            reader.advance(avail)
+                            frames += 1
+                            break
+
                         while reader.size < frame_len:
                             if not reader.read_more():
                                 break
-                                
+
                         if reader.size < frame_len:
                             status = "PARTIAL"
                             current_cand_len += reader.size
                             reader.advance(reader.size)
                             frames += 1
                             break
-                            
+
                         current_cand_len += frame_len
                         reader.advance(frame_len)
                         frames += 1
-                        
+
                     if frames > 0:
+                        meta = {"structural_status": status, "frame_count": frames}
+                        if scan_limit_hit:
+                            meta["scan_limit_truncated"] = True
                         candidates.append(
                             RecoveryCandidate(
                                 candidate_id=f"REC-PS-{abs_offset:08X}",
@@ -361,7 +528,7 @@ class HikvisionCarvingStrategy(CarvingStrategy):
                                 format_name="MPEG-PS Pack",
                                 confidence=0.90 if status == "VALID" else 0.70,
                                 signature_matched="000001BA",
-                                metadata={"structural_status": status, "frame_count": frames},
+                                metadata=meta,
                             )
                         )
 
@@ -389,14 +556,15 @@ class Mp4FtypCarvingStrategy(CarvingStrategy):
                     abs_offset = reader.global_offset + pos - 4
                     if abs_offset >= limit:
                         break
-                        
+
                     reader.advance(pos - 4)
-                    
+
                     status = "VALID"
                     current_cand_len = 0
                     has_moov = False
                     has_mdat = False
-                    
+                    scan_limit_hit = False
+
                     while True:
                         while reader.size < 8:
                             if not reader.read_more():
@@ -404,44 +572,53 @@ class Mp4FtypCarvingStrategy(CarvingStrategy):
                         if reader.size < 8:
                             if current_cand_len == 0: reader.advance(reader.size)
                             break
-                            
+
                         box_size = int.from_bytes(reader.data[0:4], "big")
                         box_type = reader.data[4:8]
-                        
+
                         if box_size < 8:
                             status = "CORRUPTED" if current_cand_len == 0 else "PARTIAL"
                             break
-                            
+
+                        if abs_offset + current_cand_len + box_size > limit:
+                            scan_limit_hit = True
+                            status = "PARTIAL"
+                            allowed = limit - (abs_offset + current_cand_len)
+                            while reader.size < allowed:
+                                if not reader.read_more():
+                                    break
+                            avail = min(reader.size, allowed)
+                            current_cand_len += avail
+                            reader.advance(avail)
+                            break
+
                         if box_type == b"moov":
                             has_moov = True
                         elif box_type == b"mdat":
                             has_mdat = True
-                            
+
                         while reader.size < box_size:
                             if not reader.read_more():
                                 break
-                                
+
                         if reader.size < box_size:
                             status = "PARTIAL"
                             current_cand_len += reader.size
                             reader.advance(reader.size)
                             break
-                            
+
                         current_cand_len += box_size
                         reader.advance(box_size)
-                        
-                        # Assuming contiguous boxes. If we hit something not a standard box?
-                        # MP4 boxes are contiguous.
-                        # Stop if we have both moov and mdat and are at a box boundary?
-                        # Actually just keep going until EOF or invalid box?
-                        # A generic MP4 file is just a sequence of boxes.
-                        
+
                     confidence = 0.95
                     if not (has_moov and has_mdat):
                         status = "PARTIAL"
                         confidence = 0.70
-                        
+
                     if current_cand_len > 0:
+                        meta = {"structural_status": status, "has_moov": has_moov, "has_mdat": has_mdat}
+                        if scan_limit_hit:
+                            meta["scan_limit_truncated"] = True
                         candidates.append(
                             RecoveryCandidate(
                                 candidate_id=f"REC-MP4-{abs_offset:08X}",
@@ -451,7 +628,7 @@ class Mp4FtypCarvingStrategy(CarvingStrategy):
                                 format_name="ISO MP4 Container",
                                 confidence=confidence,
                                 signature_matched="ftyp",
-                                metadata={"structural_status": status, "has_moov": has_moov, "has_mdat": has_mdat},
+                                metadata=meta,
                             )
                         )
                 else:
@@ -562,7 +739,7 @@ class RecoveryEngine:
 
                 has_second_dhav = sample.find(b"DHAV", 4) != -1
                 has_annex_b = b"\x00\x00\x00\x01" in sample or b"\x00\x00\x01" in sample
-                
+
                 if length_bytes < 24:
                     return {"status": "CORRUPTED", "details": "DHAV header present but payload data is severely truncated", "confidence": 0.30}
 
@@ -617,7 +794,7 @@ class RecoveryEngine:
         file_size = image_path.stat().st_size
         if offset_bytes < 0 or length_bytes <= 0 or offset_bytes >= file_size:
             return 0
-            
+
         # Truncate length if it exceeds EOF safely
         safe_length = min(length_bytes, file_size - offset_bytes)
 
