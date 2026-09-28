@@ -2,22 +2,7 @@
 
 Drishtik utilizes Hyperledger Fabric as an enterprise permissioned ledger for **cryptographic integrity anchoring** and **chain-of-custody verification**.
 
-## Current verified capability after Sprint 7B
-
-The system implements a true Node.js-based Fabric Gateway architecture:
-
-* real Fabric Gateway connection
-* real `submitAsync()` transaction submission
-* real transaction ID
-* real commit-status confirmation
-* real block number when supplied by commit status
-* real ledger verification through `GetEvidenceAnchor`
-* no fabricated transaction/block metadata
-* offline fallback
-* `get_transaction()` remains unsupported unless a genuine ledger transaction query mechanism is added
-* multi-organization Fabric governance remains future work
-
-### Architecture
+## Current Architecture (Sprint 7B)
 
 ```text
 FastAPI Python backend
@@ -42,6 +27,34 @@ commit confirmation
         v
 ledger verification
 ```
+
+### Verified through live local Fabric
+
+* real transaction submission
+* real transaction ID
+* real commit confirmation
+* real block number
+* ledger retrieval
+* SHA-256 verification
+
+### Still future work
+
+* multi-organization Fabric governance
+* production CA/identity management
+* production deployment
+* direct arbitrary transaction lookup via `get_transaction()`
+
+## Reproducible local validation procedure
+
+1. Start the local Fabric network using Docker Compose in the `blockchain` directory.
+2. Deploy the `evidence_anchor` chaincode to the local channel.
+3. Generate or export local client certificates and private keys.
+4. Set the necessary environment variables (`FABRIC_PEER_ENDPOINT`, `FABRIC_CLIENT_CERT_PATH`, etc.) pointing to the local network.
+5. Run the live integration test:
+   ```bash
+   $env:FABRIC_LIVE_TEST="1"
+   pytest backend/tests/test_fabric_gateway.py -q
+   ```
 
 ## Identity and Security Handling
 

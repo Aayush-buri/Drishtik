@@ -66,7 +66,7 @@ def test_5_evaluate_evidence_no_config(clean_gateway):
 def test_6_no_fake_transactions(mock_send_request, clean_gateway):
     # Setup mock to simulate connected but not actually anchoring
     mock_send_request.side_effect = lambda method, args: {"result": {"status": "NOT_CONFIGURED"}} if method == "health" else {}
-    
+
     settings.FABRIC_ENABLED = True
     provider = HyperledgerFabricProvider()
     res = provider.anchor_evidence("c1", "e1", "hash", "type", "actor", datetime.now(timezone.utc), "src", {})
@@ -142,34 +142,65 @@ def test_mocked_real_verification(mock_send_request, clean_gateway):
 
     settings.FABRIC_ENABLED = True
     provider = HyperledgerFabricProvider()
-    
+
     # Match
     res = provider.verify_anchor("c1", "e1", "EXPECTED_HASH")
     assert res.verified is True
     assert res.status == "VERIFIED"
-    
+
     # Mismatch
     res2 = provider.verify_anchor("c1", "e1", "DIFFERENT_HASH")
     assert res2.verified is False
     assert res2.status == "MISMATCH"
 
 @pytest.mark.skipif(not os.environ.get("FABRIC_LIVE_TEST"), reason="Live Fabric network required for integration test")
-def test_live_integration_real_transaction():
+def test_live_integration_real_transaction(clean_gateway):
     settings.FABRIC_ENABLED = True
     provider = HyperledgerFabricProvider()
+
+    # 1. health
     health = provider.health_check()
     assert health["status"] == "CONNECTED"
-    
-    # Submit an anchor
+
+    # 2. anchor_evidence
     dt = datetime.now(timezone.utc)
-    res = provider.anchor_evidence("TEST_CASE", "TEST_EV_LIVE", "hash_live", "test_action", "test_actor", dt, "src", {})
-    
+    res = provider.anchor_evidence(
+        "LIVE_TEST_CASE",
+        "LIVE_TEST_EVIDENCE_001",
+        "a_deterministic_test_SHA-256_value",
+        "test_action",
+        "test_actor",
+        dt,
+        "src",
+        {"some": "data"}
+    )
+
     assert res.success is True
-    assert res.transaction_id is not None
-    assert res.transaction_id != ""
     assert res.status == "ANCHORED"
-    
-    # Verify the anchor
-    verify_res = provider.verify_anchor("TEST_CASE", "TEST_EV_LIVE", "hash_live")
+
+    # 3. real transaction ID
+    assert res.transaction_id is not None
+    assert isinstance(res.transaction_id, str)
+    assert len(res.transaction_id) > 0
+
+    # 4. real block number
+    assert res.block_number is not None
+    assert isinstance(res.block_number, int)
+
+    # 5. GetEvidenceAnchor
+    raw_eval = provider.evaluate_evidence_anchor("LIVE_TEST_CASE", "LIVE_TEST_EVIDENCE_001")
+    assert raw_eval["status"] == "SUCCESS"
+    assert raw_eval.get("transaction_id") == res.transaction_id
+    assert "block_number" not in raw_eval or raw_eval.get("block_number") is None
+
+    # 6. verify_anchor
+    verify_res = provider.verify_anchor("LIVE_TEST_CASE", "LIVE_TEST_EVIDENCE_001", "a_deterministic_test_SHA-256_value")
     assert verify_res.verified is True
+    assert verify_res.status == "VERIFIED"
     assert verify_res.transaction_id == res.transaction_id
+
+    # 7. mismatch verification
+    mismatch_res = provider.verify_anchor("LIVE_TEST_CASE", "LIVE_TEST_EVIDENCE_001", "WRONG_SHA256")
+    assert mismatch_res.verified is False
+    assert mismatch_res.status == "MISMATCH"
+    assert mismatch_res.transaction_id == res.transaction_id
